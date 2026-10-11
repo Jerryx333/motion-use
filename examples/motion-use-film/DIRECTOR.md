@@ -46,3 +46,18 @@ Verdict on the first draft: don't ship either cut. Fixed:
 
 - Do: composite real footage into one clip and crop prints out of it in the drawing. Evidence: six films in one 22.75 s clip cost 1,365 extracted frames instead of 8,190. Why: the footage budget counts film frames per clip. When: any wall of videos.
 - Do: let the new checks run on every draft. Evidence: the off-frame code and the 风格 misread were both found by the tool, not by looking. When: always; they are on by default in v0.7.0.
+
+## Vertical cut (2026-10-12)
+
+Same stations, voiceover and timing; every station is re-laid for 1080×1920 inside `view.safe`, stacked top to bottom (film over code, card over lights, clip over transcript, four cuts two by two). The tape runs low, under the platform's author row, where only decoration may sit. Subtitles: three lines in the safe box; each cue is cut where the next begins so two never show at once.
+
+Review round 3 (independent, codex, MP4 only, [round-3-vertical.md](reviews/round-3-vertical.md)) said don't ship. Fixed:
+
+- **Words carried through covered zones by the whips** (22.8, 31.25, 37.05, 46.45 s): each station now fades out just before its whip leaves and fades in as the next lands, so nothing readable travels through the top band or the action column.
+- **Two subtitle tracks at once** (the iPhone promo inside the prints has its own subtitles): the prints are cropped above that film's subtitle band.
+- **Proof text too small**: code 22→25 px, verify output 24→28 px, install command 25→30 px on three lines, repository address darker and larger.
+- **The flip hid the comparison**: before fades out, then after fades in; the ✕ heading leaves with the defect.
+
+Not changed (kept as non-blocking): the films inside the prints keep their own small type and, in the English cut, their Chinese kinetic words; the main subtitles and labels carry each claim.
+
+- Do: fade a station's words out before a whip in portrait. Evidence: four whip frames put headings in the top band or the action column. Why: portrait's covered zones are close to every edge, so any travel crosses one. When: vertical films with camera travel between stations.

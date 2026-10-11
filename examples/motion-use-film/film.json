@@ -9,7 +9,8 @@
     "en"
   ],
   "formats": [
-    "landscape"
+    "landscape",
+    "vertical"
   ],
   "composition": "composition/draw.js",
   "look": {

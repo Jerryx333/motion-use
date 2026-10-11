@@ -1,6 +1,6 @@
-# motion-use promo (60 s, zh / en)
+# motion-use promo (60 s, zh / en, landscape / vertical)
 
-The film in the README. 60 s at 60 fps, Chinese and English narration with burned-in subtitles. Everything on screen is real: films rendered with motion-use (as footage), the iphone-use promo's code, and real `verify`, `still --guides` and `voiceover check` output. Director notes: [DIRECTOR.md](DIRECTOR.md).
+The film in the README. 60 s at 60 fps, Chinese and English narration with burned-in subtitles, in landscape (README) and vertical (Douyin, Channels, Xiaohongshu, TikTok, Shorts). The vertical cut re-lays every station inside the portrait safe area with the same timing. Everything on screen is real: films rendered with motion-use (as footage), the iphone-use promo's code, and real `verify`, `still --guides` and `voiceover check` output. Director notes: [DIRECTOR.md](DIRECTOR.md).
 
 ```bash
 cd examples/motion-use-film
