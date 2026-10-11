@@ -2,6 +2,14 @@
   "version": 1,
   "kind": "film",
   "name": "my-film",
+  "brief": {
+    "subject": "TODO: what the film is about, in one line",
+    "purpose": "TODO: where it will play and what the viewer should do after",
+    "audience": "TODO: who watches it",
+    "tone": "TODO: two or three words for how it should feel",
+    "length": 18,
+    "reference": "TODO (optional): a reference folder from `motion-use reference <url>`, or none"
+  },
   "duration": 18,
   "fps": 60,
   "languages": [

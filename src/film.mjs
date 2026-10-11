@@ -79,6 +79,23 @@ export function validateFilm(
       "$.duration",
       "seconds, 1–180; authored timing is never silently stretched",
     );
+  if (data.brief !== undefined) {
+    const b = data.brief;
+    if (!b || typeof b !== "object" || Array.isArray(b))
+      error("$.brief", "{subject, purpose, audience, tone, length, reference}");
+    else {
+      for (const [k, v] of Object.entries(b)) {
+        if (k === "length") {
+          if (!finite(v, 1, 180)) error("$.brief.length", "target seconds, 1–180");
+          else if (finite(data.duration, 1, 180) && Math.abs(v - data.duration) > 0.5)
+            warnings.push({ path: "$.brief.length", message: `the brief asks for ${v} s but the shots cover ${data.duration} s: re-plan the shots and set duration` });
+        } else if (typeof v !== "string" || v.length > 500)
+          error(`$.brief.${k}`, "text, at most 500 characters");
+        else if (/^\s*TODO\b/.test(v) && k !== "reference")
+          warnings.push({ path: `$.brief.${k}`, message: "still a TODO: fill this field before directing (motion-use init --subject … --purpose … --tone …)" });
+      }
+    }
+  }
   if (!FPS_VALUES.includes(data.fps)) error("$.fps", "24, 25, 30 or 60");
   for (const [key, allowed] of [
     ["languages", null],
@@ -645,6 +662,18 @@ export function initFilm(o, dir) {
     fs.readFileSync(path.join(ROOT, "templates", "film", "film.json"), "utf8"),
   );
   if (o.name) data.name = o.name;
+  // Every part a user changes first is a field: fill the brief from flags, keep TODOs for the rest.
+  for (const k of ["subject", "purpose", "audience", "tone"])
+    if (typeof o[k] === "string" && o[k].trim()) data.brief[k] = o[k].trim();
+  if (o.length !== undefined) {
+    const n = Number(o.length);
+    if (!finite(n, 1, 180)) throw new BriefError("--length: seconds, 1–180");
+    data.brief.length = n;
+  }
+  if (o.palette) {
+    const hex = o.palette.split(",").map((x) => x.trim());
+    data.look.palette = hex.length > 1 ? hex : o.palette.trim();
+  }
   if (o.lang) {
     data.languages = o.lang.split(",");
     data.copy = Object.fromEntries(

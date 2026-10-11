@@ -24,7 +24,9 @@ motion-use 属于 [*-use 工具族](https://github.com/leeguooooo/plugins)：给
 ## 导演模式（默认）
 
 ```bash
-motion-use init my-film --name my-product --lang zh,en --format landscape,vertical
+motion-use init my-film --name my-product --lang zh,en --format landscape,vertical \
+  --subject "纸船记账 App" --purpose "App Store 预览视频" --tone "安静、利落" --length 30
+motion-use reference https://prompt-motion.com/<作品页> my-film  # 研究别人发布的作品：署名、提示词、拆解
 # 在 DIRECTOR.md、film.json 和 composition/draw.js 里导演这部片子
 motion-use validate my-film
 motion-use voiceover my-film                 # 按镜头生成旁白，有缓存
@@ -115,6 +117,7 @@ motion-use 是一个 Node.js 程序，不是单个原生二进制：渲染要驱
 | `render [brief]` | 每种语言 × 画幅一个 MP4，外加封面 PNG；`--quality draft\|standard\|high`、`--target github` / `--max-size 9MB`；`--release` 出平台母版和清单，`--snapshot <id>` 原样重渲染之前的版本，`--gate` 旁白被标出、文字出画或叠字时失败 |
 | `verify <mp4>` | 解码并测量交付的视频：检查帧、音频、运动指标；`--gate` 红灯时失败，`--loop` 检查循环接缝，`--manifest` 确认文件就是当前发布母版 |
 | `breakdown <video>` | 拆解参考片：切点、节拍网格、联系表、转场条、运动热力图、色板、运动指标 |
+| `reference <url>` | 把别人发布的作品存下来研究（[Prompt Motion](https://prompt-motion.com) 的作品页，或任何带 `VideoObject` 的页面）：作者和原帖、提示词或 skill、视频和拆解结果，放在不进 git 的 `references/<slug>/`。提示词归原作者，只能借鉴着自己写，不能照抄 |
 | `beats <audio>` | 测一首歌：速度、第一个强拍、每小节响度、高潮；打印让片子从强拍开始的 `music` 配置 |
 | `compare <a> <b>` | 两支片子同一时刻并排对比：`--times 1.5,4` |
 | `doctor` | 检查 Node、FFmpeg、Chrome、引擎和字体 |

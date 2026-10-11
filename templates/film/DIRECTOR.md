@@ -2,13 +2,13 @@
 
 This is an editable motion study of the pulse rhythm. Replace the drawing and shot plan for the subject; changing only the text makes another template video. Method: [directing.md](https://github.com/leeguooooo/motion-use/blob/main/references/directing.md).
 
-Before coding, write:
+Before coding, fill `film.json` → `brief` (subject, purpose, audience, tone, length; `validate` lists the TODOs), then write:
 
 - The viewer's one takeaway, backed by the product/source.
 - The look, locked for the whole film: one style sentence, one palette, the character approach. Put it in `film.json` → `look`.
 - The object that carries the film from the first shot to the last: a real action, object, recording, illustration or diagram.
 - A shot plan: for each shot, the object, what it does, the camera move (`hold`, `push`, `pan`, `slam`…), the few words on screen, and how the next shot inherits an object or motion.
-- The reference and what you are borrowing (timing, framing, typography), with attribution. `motion-use breakdown ref.mp4` measures it.
+- The reference and what you are borrowing (timing, framing, typography), with attribution. `motion-use breakdown ref.mp4` measures a video; `motion-use reference <url>` saves a gallery entry with its credits. Describe the borrowed technique in your own words; never paste the source prompt.
 - The four decisive frames: opening (a concrete small scene, not a title), action, consequence, resolution (an action on the subject, not a centred card).
 
 The default is an 18-second study: two objects, one message, a reply, a network, a name written onto the receiver. There is no required shot count or palette. The code is `composition/draw.js`; `film.json` contains copy, look, output formats, authored shot windows and audio placement.

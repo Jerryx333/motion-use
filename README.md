@@ -24,7 +24,9 @@ Part of the [*-use family](https://github.com/leeguooooo/plugins): tools that gi
 ## Directed films (default)
 
 ```bash
-motion-use init my-film --name my-product --lang zh,en --format landscape,vertical
+motion-use init my-film --name my-product --lang zh,en --format landscape,vertical \
+  --subject "a paper boat app" --purpose "App Store preview" --tone "calm, precise" --length 30
+motion-use reference https://prompt-motion.com/<entry> my-film  # study a published piece: credits, prompt, breakdown
 # direct the film in DIRECTOR.md, film.json and composition/draw.js
 motion-use validate my-film
 motion-use voiceover my-film                 # narration per shot; cached
@@ -115,6 +117,7 @@ The installer downloads the release archive and its `.sha256` from GitHub, verif
 | `render [brief]` | MP4 per language × format, plus a cover PNG; `--quality draft\|standard\|high`, `--target github` / `--max-size 9MB`; `--release` platform masters + manifest, `--snapshot <id>` re-render an earlier cut, `--gate` fail on flagged narration, off-frame text or overlapping text |
 | `verify <mp4>` | Decode and measure a delivered video: review frames, audio, motion lights; `--gate` fails on red, `--loop` checks the loop seam, `--manifest` checks a file is the current release master |
 | `breakdown <video>` | Take a reference apart: cuts, beat grid, contact sheets, transition strips, motion heatmaps, palette, motion lights |
+| `reference <url>` | Save a published piece for study (a [Prompt Motion](https://prompt-motion.com) entry, or any page with a `VideoObject`): creator and post, the prompt or skill, the video and its breakdown, in a git-ignored `references/<slug>/`. The prompt stays its creator's: paraphrase, never paste |
 | `beats <audio>` | Measure a song: tempo, first downbeat, bar loudness, the drop; prints the `music` line that starts the film on a downbeat |
 | `compare <a> <b>` | Frames of two videos side by side: `--times 1.5,4` |
 | `doctor` | Check Node, FFmpeg, Chrome, the engine and fonts |

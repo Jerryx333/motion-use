@@ -40,6 +40,7 @@ import {
 import { normalizeAudio, verifyVideo, buildNarrationStem } from "./verify.mjs";
 import { generateFilmNarration } from "./film-voiceover.mjs";
 import { breakdownVideo } from "./breakdown.mjs";
+import { fetchReference } from "./reference.mjs";
 import { analyzeBeats, decodeMono } from "./beats.mjs";
 import { compareVideos } from "./compare.mjs";
 import { measureMotion, gradeMotion } from "./motion-check.mjs";
@@ -57,7 +58,8 @@ const HELP = `motion-use ${VERSION} — directed films, exact-time animation, lo
 
 Usage: motion-use <command> [options]
 
-  init [dir]          Start a directed film (film.json + composition/draw.js + DIRECTOR.md)
+  init [dir]          Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
+                      fields up front: --subject --purpose --audience --tone --palette --length (seconds)
                       --mode template keeps the scene-template workflow; --style/--story also select it
   validate [brief]    Check a brief: fields, files, voiceover lengths, characters the fonts cannot draw
   voiceover [brief]   Speak each scene's "narration" into voiceover/<lang>/<scene-id>.mp3 (--engine azure|edge)
@@ -74,7 +76,10 @@ Usage: motion-use <command> [options]
                       is the current release master)
   breakdown <video>   Take a reference video apart: cuts, beat grid, contact sheets, transition strips,
                       motion heatmaps, palette and motion lights (--out <dir>)
-  beats <audio>       Find a song's tempo, first downbeat, bar loudness and drop; prints the film.json
+  reference <url>     Study a published piece (a prompt-motion.com entry, or any page with a VideoObject):
+                      credits, prompt or skill, video and its breakdown in references/<slug>/ (git-ignored;
+                      the prompt belongs to its creator: paraphrase, never paste) (--no-video, --out <dir>)
+  beats <audio>      Find a song's tempo, first downbeat, bar loudness and drop; prints the film.json
                       music line that puts film second 0 on a downbeat (--from/--to: analyse a range)
   compare <a> <b>     Put frames of two videos side by side (--times 1.5,4 --out compare.png)
   doctor              Check Node, ffmpeg, Chrome and the bundled engine (--install-browser fetches Chrome)
@@ -122,6 +127,7 @@ export async function main(argv) {
     render,
     verify,
     breakdown,
+    reference,
     beats,
     compare,
     doctor,
@@ -139,6 +145,12 @@ export async function main(argv) {
         mode: { type: "string" },
         story: { type: "string" },
         name: { type: "string" },
+        subject: { type: "string" },
+        purpose: { type: "string" },
+        audience: { type: "string" },
+        tone: { type: "string" },
+        palette: { type: "string" },
+        length: { type: "string" },
         lang: { type: "string" },
         format: { type: "string" },
         out: { type: "string" },
@@ -172,6 +184,7 @@ export async function main(argv) {
         "asr-model": { type: "string" },
         "no-asr": { type: "boolean" },
         "no-text-check": { type: "boolean" },
+        "no-video": { type: "boolean" },
       },
     });
   } catch (e) {
@@ -1373,18 +1386,7 @@ async function verify(o, [file]) {
   return r.ok ? 0 : 1;
 }
 
-async function breakdown(o, [file]) {
-  if (!file) return fail("breakdown needs a video path", o.json);
-  const input = path.resolve(file);
-  if (!fs.existsSync(input)) return fail(`${file} does not exist`, o.json);
-  const out = path.resolve(
-    o.out ??
-      path.join(
-        path.dirname(input),
-        "breakdown",
-        path.basename(input, path.extname(input)),
-      ),
-  );
+async function runBreakdown(input, out) {
   const r = await breakdownVideo(input, out);
   // The same motion lights the delivery check uses, so a reference and your film compare directly.
   const measured = measureMotion(input),
@@ -1398,6 +1400,54 @@ async function breakdown(o, [file]) {
     path.join(out, "breakdown.md"),
     `\n## Motion lights\n\n${motion.level}: fast_ratio ${motion.fast_ratio}, worst window ${motion.worst_window_fast_ratio ?? "n/a"}, longest still ${motion.longest_still_s}s, events ${motion.events_per_10s}/10s, blue-purple ${motion.blue_purple_share}. Compare with your own film's review/<id>/report.json.\n`,
   );
+  return r;
+}
+
+async function reference(o, [url, dir = "."]) {
+  if (!url)
+    return fail(
+      "reference needs a gallery URL: motion-use reference https://prompt-motion.com/<entry>",
+      o.json,
+    );
+  const outRoot = path.resolve(o.out ?? path.join(dir, "references"));
+  const r = await fetchReference(url, {
+    outRoot,
+    video: !o["no-video"],
+    breakdown: async (file, out) => {
+      const b = await runBreakdown(file, out);
+      return {
+        transitions: b.transitions.length,
+        segments: b.segments.length,
+        beat: b.beat_grid?.step_seconds ?? null,
+        motion: b.motion.level,
+      };
+    },
+  });
+  if (o.json) console.log(JSON.stringify(r, null, 2));
+  else {
+    const c = r.reference.creator,
+      who = c?.handle ? `@${c.handle}` : (c?.name ?? "unknown creator");
+    console.log(
+      `${path.join(r.dir, "REFERENCE.md")}\n${r.reference.title ?? url} by ${who} (${r.reference.kind ?? r.reference.source})${r.breakdown ? `; ${r.breakdown.transitions} transitions, motion ${r.breakdown.motion}` : ""}\nthe prompt and video belong to their creator: study and paraphrase, never paste or commit them (the folder is git-ignored)${r.warnings.length ? "\n" + r.warnings.join("\n") : ""}`,
+    );
+  }
+  return 0;
+}
+
+async function breakdown(o, [file]) {
+  if (!file) return fail("breakdown needs a video path", o.json);
+  const input = path.resolve(file);
+  if (!fs.existsSync(input)) return fail(`${file} does not exist`, o.json);
+  const out = path.resolve(
+    o.out ??
+      path.join(
+        path.dirname(input),
+        "breakdown",
+        path.basename(input, path.extname(input)),
+      ),
+  );
+  const r = await runBreakdown(input, out),
+    motion = r.motion;
   if (o.json) console.log(JSON.stringify({ ok: true, out, ...r }, null, 2));
   else
     console.log(

@@ -62,7 +62,10 @@ test("look, camera and on-screen text checks map storyboard rules onto film.json
   const data = JSON.parse(fs.readFileSync(path.join(d, "film.json"), "utf8"));
   data.voiceover = false;
   assert.deepEqual(validateFilm(data, d).errors, []);
-  assert.deepEqual(validateFilm(data, d).warnings, [], "the starter itself passes its own checks");
+  const starter = validateFilm(data, d).warnings;
+  // The only notes on a fresh starter are the brief fields the user has not filled yet.
+  assert.deepEqual(starter.filter((w) => !w.path.startsWith("$.brief.")), [], "the starter itself passes its own checks");
+  assert.deepEqual(starter.map((w) => w.path), ["$.brief.subject", "$.brief.purpose", "$.brief.audience", "$.brief.tone"]);
   const warn = (f) => {
     const x = structuredClone(data);
     f(x);

@@ -21,6 +21,8 @@ Use the user's subject, material and existing project; verify product claims aga
 - Lock `look`: one style sentence, one palette, the character approach (none, hands, footage, generated frames — not code-drawn mascots).
 - Each shot names an object you could point at, what *it* does, its `camera` move and the ≤ 8 words on screen. Open on a concrete small scene; end on an action on the subject, not a centred card; keep one example through the film.
 - Words go in `copy` per language, numbers and series in `data`, images in `assets`, footage in `videos`. Changing one value then changes one thing.
+- Fill the brief fields first: `motion-use init <dir> --subject … --purpose … --audience … --tone … --palette … --length 30` (or edit `film.json` → `brief`); `validate` lists any field still a TODO.
+- Given a gallery entry (a prompt-motion.com page), run `motion-use reference <url>`: it saves the credits, the prompt or skill, the video and its breakdown in a git-ignored `references/<slug>/`. The prompt belongs to its creator: study it, write the brief in your own words, credit borrowed techniques in DIRECTOR.md, never paste it into a deliverable or commit it.
 - Given a reference video, run `motion-use breakdown ref.mp4` first and learn the mechanism, not the pixels. Pick an explainer look from [references/grammars.md](references/grammars.md) by what the narration explains.
 - Cutting to a song or building a UI-morph loop: ask for the inputs in [references/briefing.md](references/briefing.md), run `motion-use beats song.wav`, and show the shot list on the beat grid before writing code.
 

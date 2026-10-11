@@ -1,6 +1,6 @@
 # Alternatives
 
-Checked 2026-10-05; huashu-art-motion, Claude Motion and Higgsfield Katana added 2026-10-10. Licenses are as reported by the GitHub API on that date. Only features we read in each project's own README or docs are listed.
+Checked 2026-10-05; huashu-art-motion, Claude Motion and Higgsfield Katana added 2026-10-10; Prompt Motion added 2026-10-12. Licenses are as reported by the GitHub API on that date. Only features we read in each project's own README or docs are listed.
 
 | Project | License | What it is | Pick it when |
 |---|---|---|---|
@@ -11,6 +11,7 @@ Checked 2026-10-05; huashu-art-motion, Claude Motion and Higgsfield Katana added
 | [memex-lab/product-launch-video-skill](https://github.com/memex-lab/product-launch-video-skill) | MIT | An agent skill: brief → storyboard → Remotion → review, with optional TTS | You want a cinematic launch video and already use Remotion |
 | [browser-use/video-use](https://github.com/browser-use/video-use) | MIT | Editing existing footage with a coding agent (transcripts, cuts) | You have recordings to edit, not a video to generate |
 | [alchaincyf/huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion) | MIT | An agent skill (Python + Playwright) for art-style and explainer animation: 35 art-style recipes drawn in code, 8 explainer grammars, reference breakdown, a delivery gate for slideshow pacing, AI-generated character frames, optional voice cloning | You want painterly art-history styles, a character crossing many styles, or its parameterized explainer clips |
+| [Prompt Motion](https://prompt-motion.com) (curated by @p4nthera_) | Gallery; "videos and prompts belong to their creators" | A hand-reviewed gallery of motion videos made with Claude Opus 5.5, each with the creator's X post, the prompt or skill behind it, model and effort, tags, and prompt templates with every changeable part as a field | You want to see what one prompt or skill produced before writing your own. motion-use reads an entry with `motion-use reference <url>` (credits, prompt, video, breakdown, kept out of git) and borrowed the field idea for the film `brief` |
 | [calesthio/OpenMontage](https://github.com/calesthio/OpenMontage) | AGPL-3.0 | A large agentic video production system with many pipelines | You want one system covering many kinds of production |
 
 ## Where motion-use fits

@@ -10,3 +10,6 @@ examples/*/voiceover/.motion-use-voiceover.json
 # three.js example: build output and generated score
 examples/*/vendor/
 examples/*/audio/*.wav
+# `motion-use reference` output: third-party prompts and videos, for study only
+/references/*/
+examples/*/references/*/
