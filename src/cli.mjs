@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -48,7 +48,9 @@ import { checkNarration, describeNarration, narrationItems } from "./narration-c
 import { probeText, describeText } from "./text-probe.mjs";
 import { createSnapshot, findSnapshot, restoreSnapshot } from "./snapshot.mjs";
 import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry, writeReleaseManifest } from "./release.mjs";
-import { compositeStill, compositeVideo, frameName, frameRange, runEngine, splitFrames } from "./engine.mjs";
+import { compositeArgs, compositeStill, frameName, frameRange, runEngine, splitFrames, startStreamingEngine } from "./engine.mjs";
+import { chooseRenderer, findRenderer, nativeStills, nativeWorkers, pair, streamRender, unsupportedContext } from "./native.mjs";
+import { mixAudio } from "./mix.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(
@@ -104,10 +106,14 @@ Options for still/render:
   --no-text-check     still/render: skip measuring drawn text against the frame and safe area
   --allow-static "why"       Deliver a film that the motion check reads as a slideshow, recording why
   --allow-blue-purple "why"  Deliver a blue-purple film (e.g. a Starry Night study), recording why
-  --gpu               Render on the GPU: faster, but frames may differ by invisible noise between runs
-                      (default: software rendering, bit-identical output for the same brief)
-  --workers <n>       still/render: processes an external engine ("engine": {"type": "command"}) runs at
-                      once, each on its own contiguous frame range (default 1); also passed to the browser renderer
+  --renderer <r>      still/render: native (motion-render: Skia on the CPU, frames piped straight into ffmpeg,
+                      sound mixed by ffmpeg), chrome (HyperFrames in Chrome, the reference) or auto (default:
+                      native when motion-render is installed and the film draws no WebGL; film.json "renderer")
+  --gpu               Render in Chrome on the GPU: faster than Chrome on the CPU, but frames may differ by
+                      invisible noise between runs (default: bit-identical output for the same brief)
+  --workers <n>       still/render: threads of the native renderer (default: cores, at most 8); processes an
+                      external engine runs at once, each on its own frame range (default 1; an engine with
+                      "parallel": true gets one process and n); passed to the browser renderer otherwise
   --json              Machine-readable result on stdout (compact; --verbose adds every measurement)
 
 project defaults to ./film.json, otherwise ./brief.json. Docs: references/film.md`;
@@ -192,6 +198,7 @@ export async function main(argv) {
         "no-text-check": { type: "boolean" },
         "no-video": { type: "boolean" },
         workers: { type: "string" },
+        renderer: { type: "string" },
       },
     });
   } catch (e) {
@@ -199,6 +206,8 @@ export async function main(argv) {
   }
   if (args.values.workers !== undefined && !/^([1-9]|[12][0-9]|3[0-2])$/.test(args.values.workers))
     return fail("--workers takes a whole number from 1 to 32", args.values.json);
+  if (args.values.renderer !== undefined && !["auto", "native", "chrome"].includes(args.values.renderer))
+    return fail("--renderer must be auto, native or chrome", args.values.json);
   if (cmd !== "upgrade") await maybeNotify(VERSION);
   try {
     return await commands[cmd](args.values, args.positionals);
@@ -752,7 +761,12 @@ async function render(o, [briefPath]) {
         if (blockedPreview) return { ok: false, id, error: blockedPreview };
         const tmpPreview = path.join(proj.dir, "preview.mp4");
         if (!o.json) console.error(`previewing ${id} ${from}–${to}s (silent, no delivery checks)…`);
-        const hf = brief.engine
+        let hf = null;
+        if (!brief.engine && pickRenderer(brief, o).renderer === "native") {
+          hf = await nativeRender(proj, tmpPreview, { ...o, quality: "draft" }, o._picked);
+          if (hf.code !== 0 && unsupportedContext(hf.out)) hf = fallBack(o, hf.out);
+        }
+        hf ??= brief.engine
           ? await engineRender(brief, proj, tmpPreview, { ...o, quality: "draft" })
           : await runHyperframes(
               ["render", proj.dir, "--output", tmpPreview, "--fps", String(proj.fps), "--quality", "draft", "--quiet", ...hfWorkers(o), o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
@@ -768,7 +782,7 @@ async function render(o, [briefPath]) {
           motion = { level: gradeMotion(m).level, fast_ratio: m.fast_ratio, blank_run_s: m.blank_run_s, blue_purple_share: m.blue_purple_share };
         } catch {}
         if (!o.json) console.log(previewFile);
-        return { ok: true, id, preview: true, file: previewFile, from, to, motion };
+        return { ok: true, id, preview: true, file: previewFile, from, to, motion, renderer: usedRenderer(brief, o) };
       }
       const file = path.join(
         out,
@@ -779,8 +793,7 @@ async function render(o, [briefPath]) {
       // Text check before capture: measured boxes of every drawn string against the frame.
       let textCheck = null;
       if (proj.film && !o["no-text-check"]) {
-        // An engine's own text is pixels; only a composition overlay's strings can be measured.
-        textCheck = brief.engine && !brief.source ? ENGINE_TEXT : await probeText(proj.dir, proj.total);
+        textCheck = await filmTextCheck(proj, brief, o);
         if (!o.json) for (const line of describeText(textCheck)) console.error(`warning: ${id}: ${line}`);
         const off = textCheck.runs?.filter((x) => x.kind === "frame" || x.kind === "collision") ?? [];
         if (o.gate && off.length)
@@ -789,8 +802,13 @@ async function render(o, [briefPath]) {
       const tmp = path.join(proj.dir, "render.mp4");
       fs.rmSync(tmp, { force: true });
       if (!o.json)
-        console.error(`rendering ${id} (${proj.total.toFixed(1)}s)…`);
-      const hf = brief.engine
+        console.error(`rendering ${id} (${proj.total.toFixed(1)}s${proj.film ? `, ${usedRenderer(brief, o)} renderer` : ""})…`);
+      let hf = null;
+      if (proj.film && !brief.engine && pickRenderer(brief, o).renderer === "native") {
+        hf = await nativeRender(proj, tmp, { ...o, quality, crf: o.release ? 10 : undefined }, o._picked);
+        if (hf.code !== 0 && unsupportedContext(hf.out)) hf = fallBack(o, hf.out);
+      }
+      hf ??= brief.engine
         ? await engineRender(brief, proj, tmp, { ...o, quality, crf: o.release ? 10 : undefined })
         : await runHyperframes(
             [
@@ -887,6 +905,8 @@ async function render(o, [briefPath]) {
         for (const line of describeNarration({ lines: verification.narration_check.lines ?? [] })) verification.warnings.push(line);
       }
       verification.snapshot = snapshot;
+      // pixels differ slightly between renderers: the report says which one made this file
+      verification.renderer = usedRenderer(brief, o);
       fs.writeFileSync(
         verification.report,
         JSON.stringify(verification, null, 2) + "\n",
@@ -925,7 +945,7 @@ async function render(o, [briefPath]) {
       let release = null;
       if (o.release) {
         try {
-          release = makeRelease({ out, proj, id, file, cover, seconds: verification.observed.seconds, force: o.force, log: o.json ? () => {} : (m) => console.error(m) });
+          release = makeRelease({ out, proj, id, file, cover, seconds: verification.observed.seconds, force: o.force, renderer: verification.renderer, log: o.json ? () => {} : (m) => console.error(m) });
         } catch (e) {
           return { ok: false, id, file, error: `release masters: ${e.message}` };
         }
@@ -943,6 +963,7 @@ async function render(o, [briefPath]) {
         seconds: verification.observed.seconds,
         lang: proj.lang,
         format: proj.format,
+        renderer: verification.renderer,
         normalization,
         verification: {
           ok: verification.ok,
@@ -1013,11 +1034,11 @@ async function render(o, [briefPath]) {
  * out/release/<id>.mp4 (x264 veryslow CRF 16), <id>-x.mp4 when a landscape master is above
  * X's upload limit, and the cover; returns manifest entries.
  */
-function makeRelease({ out, proj, id, file, cover, seconds, force, log }) {
+function makeRelease({ out, proj, id, file, cover, seconds, force, renderer, log }) {
   const relDir = path.join(out, "release");
   fs.mkdirSync(relDir, { recursive: true });
   const voiceover = proj.narrationTracks.map((t) => ({ id: t.id, sha256: sha(t.file) }));
-  const meta = { lang: proj.lang, format: proj.format, voiceover };
+  const meta = { lang: proj.lang, format: proj.format, voiceover, ...(renderer ? { renderer } : {}) };
   const entries = [];
   const put = (name, make, extra) => {
     const final = path.join(relDir, name),
@@ -1050,36 +1071,180 @@ const ENGINE_TEXT = {
 };
 
 /**
- * External engine render: its PNG frames for the film (or the --from/--to window), the browser
- * layer as a transparent MOV carrying the mix, composited into `file`. Returns { code, out }
- * like runHyperframes, so the delivery steps after it are the same for both engines.
+ * Which renderer draws this film's picture, decided once per command (--renderer, film.json
+ * "renderer", what is installed, WebGL); the note is printed once.
+ */
+function pickRenderer(brief, o) {
+  if (brief?.kind !== "film") return { renderer: "chrome" };
+  if (o._picked) return o._picked;
+  const r = chooseRenderer(brief, o);
+  if (r.error) throw new Error(r.error);
+  if (r.note && !o.json) console.error(`motion-use: ${r.note}`);
+  o._picked = r;
+  return r;
+}
+
+/** What made the picture, for reports: native, chrome, or an engine (+ its overlay's renderer). */
+function usedRenderer(brief, o) {
+  if (brief?.kind !== "film") return "chrome";
+  const r = pickRenderer(brief, o).renderer;
+  return brief.engine ? (brief.source ? `engine+${r}` : "engine") : r;
+}
+
+/** The page asked motion-render for something it cannot draw yet: say so, and use Chrome from now on. */
+function fallBack(o, why) {
+  const line = (why ?? "").split("\n").find((l) => unsupportedContext(l)) ?? why;
+  if (!o.json) console.error(`motion-use: motion-render cannot draw this film (${line.replace(/^motion-render:\s*/, "").trim()}); rendering in Chrome`);
+  o._picked = { renderer: "chrome", reason: line };
+  return null;
+}
+
+/** Text check of a film: the runtime's probe in motion-render's V8 or in Chrome, same runs and gates. */
+async function filmTextCheck(proj, brief, o) {
+  // An engine's own text is pixels; only a composition overlay's strings can be measured.
+  if (brief.engine && !brief.source) return ENGINE_TEXT;
+  const pick = pickRenderer(brief, o);
+  if (pick.renderer === "native") {
+    const r = await probeText(proj.dir, proj.total, { native: pick });
+    if (!r.skipped || !unsupportedContext(r.skipped)) return r;
+    fallBack(o, r.skipped);
+  }
+  return probeText(proj.dir, proj.total);
+}
+
+/**
+ * Native render of a built film page: the mix by ffmpeg first (a second or two), then
+ * motion-render's frames piped into one ffmpeg with that mix. Returns { code, out }.
+ */
+async function nativeRender(proj, file, o, pick) {
+  let audio = null;
+  if (proj.mix?.length) {
+    audio = path.join(proj.dir, "mix.wav");
+    try {
+      mixAudio(proj.mix, proj.total, audio);
+    } catch (e) {
+      return { code: 1, out: e.message };
+    }
+  }
+  return streamRender({ bin: pick.bin, proj, file, audio, quality: o.quality, crf: o.crf, workers: nativeWorkers(o) });
+}
+
+/** The cut's mix as a WAV for an engine film (none for a silent preview). */
+function engineMix(proj) {
+  if (!proj.mix?.length) return null;
+  const audio = path.join(`${proj.dir}-engine`, "mix.wav");
+  fs.mkdirSync(path.dirname(audio), { recursive: true });
+  mixAudio(proj.mix, proj.total, audio);
+  return audio;
+}
+
+/**
+ * External engine render: its frames for the film (or the --from/--to window), the composition
+ * overlay on top when there is one (motion-render's raw RGBA, or a transparent MOV from Chrome),
+ * the mix from ffmpeg, encoded into `file`. A streaming engine writes into a FIFO the same ffmpeg
+ * reads, so nothing waits for a PNG sequence. Returns { code, out } like runHyperframes.
  */
 async function engineRender(film, proj, file, o) {
   const fps = proj.fps,
     work = `${proj.dir}-engine`,
-    workers = Number(o.workers ?? 1);
+    { w, h } = proj.fmt,
+    workers = Number(o.workers ?? (film.engine.parallel ? nativeWorkers(o) : 1));
   const range = proj.range ? frameRange(fps, proj.range.from, proj.range.to) : frameRange(fps, 0, proj.total);
-  if (!o.json) console.error(`external engine: frames ${range.from}–${range.to} (${workers} worker${workers > 1 ? "s" : ""})…`);
-  const r = await runEngine(film, proj, splitFrames(range, workers), { workers, work });
-  if (!r.ok) return { code: 1, out: r.error };
-  const layer = path.join(work, "layer.mov");
-  const hf = await runHyperframes(
-    ["render", proj.dir, "--output", layer, "--format", "mov", "--fps", String(fps), "--quiet", ...hfWorkers(o), o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
-    {},
-  );
-  if (hf.code !== 0 || !fs.existsSync(layer)) return { code: 1, out: `browser layer: ${hf.out}` };
+  const count = range.to - range.from + 1;
+  const overlay = film.source ? pickRenderer(film, o) : null;
+  const stream = film.engine.stream && process.platform !== "win32";
+  const one = stream || film.engine.parallel;
+  if (!o.json)
+    console.error(`external engine: frames ${range.from}–${range.to} (${one ? `one process${film.engine.parallel ? `, ${workers} thread${workers > 1 ? "s" : ""}` : ""}` : `${workers} worker${workers > 1 ? "s" : ""}`}${stream ? ", raw stream" : ""})…`);
+  let audio = null;
   try {
-    compositeVideo({ frames: r.frames, range, layer, fps, w: proj.fmt.w, h: proj.fmt.h, quality: o.quality, crf: o.crf, out: file });
+    claimDir(work);
+    audio = engineMix(proj);
   } catch (e) {
     return { code: 1, out: e.message };
+  }
+  // The overlay from Chrome is a transparent MOV made first; motion-render's goes straight in.
+  let layer = null;
+  if (overlay && overlay.renderer !== "native") {
+    layer = path.join(work, "layer.mov");
+    const hf = await runHyperframes(
+      ["render", proj.dir, "--output", layer, "--format", "mov", "--fps", String(fps), "--quiet", ...hfWorkers(o), o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
+      {},
+    );
+    if (hf.code !== 0 || !fs.existsSync(layer)) return { code: 1, out: `browser layer: ${hf.out}` };
+  }
+  let frames = null,
+    fifo = null;
+  if (!stream) {
+    const r = await runEngine(film, proj, film.engine.parallel ? [range] : splitFrames(range, workers), {
+      workers: film.engine.parallel ? 1 : workers,
+      work: path.join(work, "run"),
+      extra: film.engine.parallel ? { workers } : {},
+    });
+    if (!r.ok) return { code: 1, out: r.error };
+    frames = r.frames;
+  } else {
+    fs.mkdirSync(path.join(work, "run"), { recursive: true });
+    fifo = path.join(work, "run", "frames.rgba");
+    execFileSync("mkfifo", [fifo]);
+  }
+  const args = ["-v", "error", "-y", ...compositeArgs({ frames, stream: fifo, range, layer, overlayRaw: overlay?.renderer === "native", audio, fps, w, h, quality: o.quality, crf: o.crf, out: file })];
+  const procs = [];
+  let producer = null;
+  if (overlay?.renderer === "native")
+    producer = spawn(overlay.bin, ["render", path.join(proj.dir, "index.html"), "--frames", `0-${count - 1}`, "--fps", String(fps), "--stream", "-", "--workers", String(nativeWorkers(o))], {
+      env: { ...process.env, MOTION_USE_ROOT: ROOT },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const ff = spawn("ffmpeg", args, { stdio: [producer ? producer.stdout : "ignore", "ignore", "pipe"] });
+  producer?.stdout.destroy();
+  if (producer) procs.push(new Promise((res) => pair(producer, ff, res)));
+  if (stream) {
+    const engine = startStreamingEngine(film, proj, range, { work: path.join(work, "run"), fifo, workers });
+    let tail = "";
+    engine.stdout.on("data", (d) => (tail = (tail + d).slice(-4000)));
+    engine.stderr.on("data", (d) => (tail = (tail + d).slice(-4000)));
+    procs.push(
+      new Promise((res) => {
+        const end = (code, note) => {
+          // An engine that never opened the FIFO leaves ffmpeg waiting on it: open and close it once.
+          try {
+            fs.closeSync(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+          } catch {}
+          if (code !== 0) ff.kill("SIGKILL");
+          res({ code: code === 0 ? 0 : 1, out: code === 0 ? "" : `external engine exited with ${code}: ${note ?? tail.trim().split("\n").slice(-10).join("\n")}` });
+        };
+        engine.on("error", (e) => end(-1, e.code === "ENOENT" ? `${film.engine.command[0]} not found` : e.message));
+        engine.on("close", (code) => end(code ?? 1));
+      }),
+    );
+  }
+  if (!producer)
+    procs.push(
+      new Promise((res) => {
+        let err = "";
+        ff.stderr.on("data", (d) => (err = (err + d).slice(-4000)));
+        ff.on("error", (e) => res({ code: 1, out: `ffmpeg: ${e.message}` }));
+        ff.on("close", (code) => res({ code: code === 0 ? 0 : 1, out: code === 0 ? "" : `ffmpeg: ${err.trim() || `exited with ${code}`}` }));
+      }),
+    );
+  const results = await Promise.all(procs);
+  // a FIFO left in the build folder would trip anything that copies it later
+  if (fifo) fs.rmSync(fifo, { force: true });
+  const bad = results.find((r) => r.code !== 0 && /external engine/.test(r.out)) ?? results.find((r) => r.code !== 0);
+  if (bad) return { code: 1, out: bad.out };
+  // A stream that ended early leaves a short file: count what arrived.
+  if (stream) {
+    const got = Number(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=nb_frames", "-of", "csv=p=0", file], { encoding: "utf8" }).trim());
+    if (got !== count) return { code: 1, out: `external engine: streamed ${got} of ${count} frames (${range.from}–${range.to})` };
   }
   return { code: 0, out: "" };
 }
 
 /**
  * Stills of an external-engine film: one engine job per requested frame (time t shows frame
- * floor(t * fps)), the overlay snapshot at that frame's time on top. Writes PNGs named like the
- * browser snapshots into `dir`.
+ * floor(t * fps)), the overlay at that frame's time on top (motion-render's PNG or Chrome's
+ * snapshot). Writes PNGs named like the browser snapshots into `dir`.
  */
 async function engineStills(film, proj, times, dir, o) {
   const fps = proj.fps,
@@ -1093,7 +1258,14 @@ async function engineStills(film, proj, times, dir, o) {
   let layers = null;
   if (film.source) {
     const layerDir = path.join(work, "layer");
-    const hf = await runHyperframes(
+    const pick = pickRenderer(film, o);
+    let hf = null;
+    if (pick.renderer === "native") {
+      claimDir(layerDir);
+      hf = await nativeStills({ bin: pick.bin, proj, times: ks.map((k) => k / fps), dir: layerDir });
+      if (hf.code !== 0 && unsupportedContext(hf.out)) hf = fallBack(o, hf.out);
+    }
+    hf ??= await runHyperframes(
       ["snapshot", proj.dir, "--at", ks.map((k) => (k / fps).toFixed(4)).join(","), "--no-end", "--output", layerDir, o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
       {},
     );
@@ -1358,7 +1530,12 @@ async function still(o, [briefPath]) {
         ? [times[0]]
         : [Math.min(proj.total - 0.05, times[0] + 1), times[0]]
       : [];
-    const hf = brief.engine
+    let hf = null;
+    if (proj.film && !brief.engine && pickRenderer(brief, o).renderer === "native") {
+      hf = await nativeStills({ bin: o._picked.bin, proj, times: [...times, ...probe], dir });
+      if (hf.code !== 0 && unsupportedContext(hf.out)) hf = fallBack(o, hf.out);
+    }
+    hf ??= brief.engine
       ? await engineStills(brief, proj, times, dir, o)
       : await runHyperframes(
           [
@@ -1407,10 +1584,10 @@ async function still(o, [briefPath]) {
     // Text check over the whole film, not only the sampled frames.
     let text = null;
     if (proj.film && !o["no-text-check"] && !proj.range) {
-      text = brief.engine && !brief.source ? ENGINE_TEXT : await probeText(proj.dir, proj.total);
+      text = await filmTextCheck(proj, brief, o);
       if (!o.json) for (const line of describeText(text)) console.error(`warning: ${id}: ${line}`);
     }
-    return { ok: true, id, frames: pngs, sheet, at: times, ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs } } : {}) };
+    return { ok: true, id, frames: pngs, sheet, at: times, renderer: usedRenderer(brief, o), ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs } } : {}) };
   });
   if (o.json && r.results)
     console.log(
@@ -1436,7 +1613,12 @@ async function onionSkin(proj, id, out, { from, to, n }, o, brief) {
   const times = Array.from({ length: n }, (_, i) => from + ((end - from) * i) / (n - 1));
   const dir = path.join(out, "stills", `${id}-onion`);
   claimDir(dir);
-  const hf = brief?.engine
+  let hf = null;
+  if (proj.film && !brief?.engine && pickRenderer(brief, o).renderer === "native") {
+    hf = await nativeStills({ bin: o._picked.bin, proj, times, dir });
+    if (hf.code !== 0 && unsupportedContext(hf.out)) hf = fallBack(o, hf.out);
+  }
+  hf ??= brief?.engine
     ? await engineStills(brief, proj, times, dir, o)
     : await runHyperframes(
         ["snapshot", proj.dir, "--at", times.map((t) => t.toFixed(3)).join(","), "--no-end", "--output", dir, o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
@@ -1462,7 +1644,7 @@ async function onionSkin(proj, id, out, { from, to, n }, o, brief) {
   }
   commitOutput(out, tmp, file);
   if (!o.json) console.log(file);
-  return { ok: true, id, onion: file, frames: pngs, at: times.map((t) => +t.toFixed(3)) };
+  return { ok: true, id, onion: file, frames: pngs, at: times.map((t) => +t.toFixed(3)), renderer: usedRenderer(brief, o) };
 }
 
 // Decoded pixels, so PNG metadata cannot make two identical frames look different.
@@ -1750,11 +1932,20 @@ async function doctor(o) {
       "bundled",
       "reinstall motion-use",
     );
+  // The native renderer is optional: without it films render in Chrome.
+  const native = findRenderer();
   // Voiceover engines are optional: reported, never a failure.
   const azureReady = Boolean(
     process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION,
   );
   const optional = [
+    {
+      name: "renderer native",
+      ok: !native.missing,
+      detail: native.missing
+        ? `not installed (optional; films render in Chrome): ${native.missing}`
+        : `motion-render ${native.version} (${native.bin})${native.caps.webgl ? "" : "; WebGL films render in Chrome"}${native.note ? `; ${native.note}` : ""}`,
+    },
     {
       name: "voiceover azure",
       ok: azureReady,

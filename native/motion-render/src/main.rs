@@ -30,13 +30,20 @@ Render a built page directly (motion-use's out/.build/<id>/index.html, or an eng
   motion-render render <index.html> [--engine --job <job.json>]
       (--at <t,t,...> | --frames <a-b>) [--fps <n>]
       [--out <dir> --format png|rgba] [--ffmpeg <out.mp4> --quality draft|looks|delivery]
-      [--workers <n>] [--stats]
+      [--stream <path|->] [--workers <n>] [--stats]
+
+Text check (motion-use's probe, run in this page's V8):
+  motion-render probe <index.html> --times <t,t,...|times.json>   prints the probe's JSON
 
 Options:
   --workers <n>   render on n threads, each with its own V8 isolate and Skia canvases
   --format        png (fast zlib level, default) or rgba (raw straight RGBA, w*h*4 bytes per frame)
   --ffmpeg <mp4>  pipe raw RGBA into ffmpeg (libx264, yuv420p, bt709, motion-use's settings)
-  --stats         print timing JSON on stdout
+  --stream <path> write raw straight RGBA frames in order to a file or FIFO (- is stdout), for an
+                  encoder the caller runs (motion-use); a job does the same with
+                  \"formats\": [\"rgba-stream\"], \"stream\": <path>
+  --stats         print timing JSON on stdout (stderr when frames go to stdout)
+  --capabilities  print what this build can do as JSON (motion-use checks it)
 ";
 
 #[derive(Clone)]
@@ -54,6 +61,7 @@ struct Plan {
     times: Vec<f64>,
     sink: Sink,
     ffmpeg: Option<(PathBuf, String, f64)>,
+    stream: Option<String>,
     workers: usize,
     stats: bool,
 }
@@ -95,7 +103,7 @@ fn run(plan: Plan) -> Result<Value> {
     let t0 = Instant::now();
     let page = Arc::new(plan.page);
     let times = Arc::new(plan.times);
-    let want_frames = plan.ffmpeg.is_some();
+    let want_frames = plan.ffmpeg.is_some() || plan.stream.is_some();
     let mut handles = vec![];
     let mut receivers = vec![];
     for k in 0..n {
@@ -163,7 +171,44 @@ fn run(plan: Plan) -> Result<Value> {
     }
     let mut encode_ms = 0.0;
     let mut ff_error = None;
-    if let Some((out, quality, fps)) = &plan.ffmpeg {
+    if let Some(target) = &plan.stream {
+        // Frames in order, straight RGBA, to a file / FIFO / stdout. Opening a FIFO blocks until
+        // its reader (the caller's encoder) is there, so open only once the first frame is drawn.
+        let mut sink: Option<Box<dyn Write>> = None;
+        for i in 0..times.len() {
+            let (_, _, _, frame) = match receivers[i % n].recv() {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => {
+                    ff_error = Some(e);
+                    break;
+                }
+                Err(_) => {
+                    ff_error = Some(anyhow!("a render worker stopped"));
+                    break;
+                }
+            };
+            if sink.is_none() {
+                sink = Some(if target == "-" {
+                    Box::new(std::io::stdout().lock())
+                } else {
+                    Box::new(std::fs::OpenOptions::new().write(true).open(target).with_context(|| format!("opening stream {}", target))?)
+                });
+            }
+            let e0 = Instant::now();
+            if let Err(e) = sink.as_mut().unwrap().write_all(&frame) {
+                ff_error = Some(anyhow!("writing frame {} to the stream: {} (did the encoder stop?)", i, e));
+                break;
+            }
+            encode_ms += e0.elapsed().as_secs_f64() * 1000.0;
+        }
+        if let Some(mut s) = sink {
+            if let Err(e) = s.flush() {
+                if ff_error.is_none() {
+                    ff_error = Some(anyhow!("flushing the stream: {}", e));
+                }
+            }
+        }
+    } else if let Some((out, quality, fps)) = &plan.ffmpeg {
         let mut child: Option<std::process::Child> = None;
         for i in 0..times.len() {
             let msg = receivers[i % n].recv();
@@ -278,11 +323,16 @@ fn real_main() -> Result<()> {
         println!("motion-render {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if args.iter().any(|a| a == "--capabilities") {
+        // webgl flips to true when the wgpu backend lands; motion-use routes WebGL films by it.
+        println!("{}", json!({"version": env!("CARGO_PKG_VERSION"), "canvas2d": true, "webgl": false, "stream": true, "probe": true, "job_stream": true, "footage": true}));
+        return Ok(());
+    }
     let mut opts: std::collections::HashMap<String, String> = Default::default();
     let mut flags: std::collections::HashSet<String> = Default::default();
     let mut pos: Vec<String> = vec![];
     let mut i = 0;
-    let valued = ["--job", "--at", "--frames", "--fps", "--out", "--format", "--ffmpeg", "--quality", "--workers", "--size"];
+    let valued = ["--job", "--at", "--frames", "--fps", "--out", "--format", "--ffmpeg", "--quality", "--workers", "--size", "--stream", "--times"];
     while i < args.len() {
         let a = &args[i];
         if valued.contains(&a.as_str()) {
@@ -300,6 +350,22 @@ fn real_main() -> Result<()> {
     let workers: usize = opts.get("--workers").map(|w| w.parse()).transpose()?.unwrap_or(1);
     let stats = flags.contains("--stats");
     let job_path = opts.get("--job").cloned().or_else(|| std::env::var("MOTION_USE_JOB").ok());
+
+    if pos.first().map(|s| s.as_str()) == Some("probe") {
+        let html = PathBuf::from(pos.get(1).ok_or_else(|| anyhow!("probe needs a page (index.html)"))?);
+        let spec = opts.get("--times").ok_or_else(|| anyhow!("probe needs --times <t,t,...|times.json>"))?;
+        let times: Vec<f64> = if spec.ends_with(".json") {
+            serde_json::from_str(&std::fs::read_to_string(spec).with_context(|| format!("reading {}", spec))?)?
+        } else {
+            spec.split(',').filter(|t| !t.trim().is_empty()).map(|t| t.trim().parse::<f64>()).collect::<std::result::Result<_, _>>()?
+        };
+        let page = page::load_html(&html)?;
+        let mut engine = Engine::new(&page, Mode::Film, None)?;
+        engine.setup(None)?;
+        let out = engine.text_probe(&serde_json::to_string(&times)?)?;
+        println!("{}", out);
+        return Ok(());
+    }
 
     if pos.first().map(|s| s.as_str()) == Some("render") {
         let html = PathBuf::from(pos.get(1).ok_or_else(|| anyhow!("render needs a page (index.html)"))?);
@@ -340,13 +406,19 @@ fn real_main() -> Result<()> {
             times,
             sink,
             ffmpeg: opts.get("--ffmpeg").map(|o| (PathBuf::from(o), opts.get("--quality").cloned().unwrap_or("looks".into()), fps)),
+            stream: opts.get("--stream").cloned(),
             workers,
             stats,
         };
         let stats_on = plan.stats;
+        let to_stdout = plan.stream.as_deref() == Some("-");
         let r = run(plan)?;
         if stats_on {
-            println!("{}", r);
+            if to_stdout {
+                eprintln!("{}", r);
+            } else {
+                println!("{}", r);
+            }
         }
         return Ok(());
     }
@@ -374,8 +446,12 @@ fn real_main() -> Result<()> {
     };
     let (page, mode) = if src.ends_with(".html") { (page::load_html(&src_path)?, Mode::Engine) } else { (page::from_job(&job, &src_path)?, Mode::Film) };
     let names = Arc::new((from..=to).map(|k| format!("{:05}.png", k)).collect::<Vec<_>>());
+    // motion-use offers a raw stream (a FIFO it encodes from) next to the PNG sequence.
+    let job_stream = job["stream"].as_str().filter(|_| job["formats"].as_array().map(|f| f.iter().any(|x| x == "rgba-stream")).unwrap_or(false)).map(String::from);
     let format = opts.get("--format").map(|s| s.as_str()).unwrap_or("png");
-    let sink = if format == "rgba" {
+    let sink = if job_stream.is_some() {
+        Sink::None
+    } else if format == "rgba" {
         Sink::Rgba { dir: out.clone(), names: Arc::new(names.iter().map(|n| n.replace(".png", ".rgba")).collect()) }
     } else {
         Sink::Png { dir: out.clone(), names }
@@ -389,7 +465,15 @@ fn real_main() -> Result<()> {
         times: (from..=to).map(|k| k as f64 / fps).collect(),
         sink,
         ffmpeg: None,
-        workers: if opts.contains_key("--workers") { workers } else { std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4) },
+        stream: job_stream,
+        // --workers, else the job's (a parallel engine gets motion-use's --workers), else the cores
+        workers: if opts.contains_key("--workers") {
+            workers
+        } else if let Some(w) = job["workers"].as_u64() {
+            w.max(1) as usize
+        } else {
+            std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4)
+        },
         stats,
     };
     let r = run(plan)?;

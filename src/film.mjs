@@ -168,10 +168,18 @@ export function validateFilm(
         const f = path.resolve(dir, x);
         return inside(dir, f) && fs.existsSync(f) && fs.statSync(f).isFile() && (x.includes("/") || x.includes(".")) ? f : x;
       });
-      engine = { type: "command", command: args, cwd, env: e.env ?? {} };
+      for (const k of ["stream", "parallel"])
+        if (e[k] !== undefined && typeof e[k] !== "boolean")
+          error(`$.engine.${k}`, k === "stream" ? "true when the command can write raw RGBA frames into the FIFO its job names" : "true when one process renders the whole range on job.workers threads");
+      // motion-render as an engine does both.
+      const native = /^motion-render(\.exe)?$/.test(path.basename(String(e.command?.[0] ?? "")));
+      engine = { type: "command", command: args, cwd, env: e.env ?? {}, stream: e.stream ?? native, parallel: e.parallel ?? native };
       warnings.push({ path: "$.engine", message: `renders with a local command (${e.command?.[0]}): it runs arbitrary code on this machine and needs --allow-code; it must draw frame N from time N/fps only` });
     }
   }
+  // Which renderer draws the picture; --renderer overrides it (src/native.mjs).
+  if (data.renderer !== undefined && !["auto", "native", "chrome"].includes(data.renderer))
+    error("$.renderer", '"auto" (default: native when motion-render is installed and the film draws no WebGL), "native" or "chrome"');
   const composition = engine && data.composition === undefined ? null : (data.composition ?? "composition/draw.js");
   const source = composition === null ? null : local(composition, "$.composition");
   const libraries = [];
@@ -847,7 +855,9 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
       path.join(fontDir, f),
     );
   // A range preview is silent: it checks picture and timing, not the mix.
-  const audio = [],
+  // Every sound is one entry of `mix` (what plays where, how loud): the page's <audio> tags are
+  // written from it for the browser renderer, and src/mix.mjs mixes it with ffmpeg for the native one.
+  const mix = [],
     selectedTracks = range ? [] : film.tracks.filter((a) => !a.lang || a.lang === lang);
   if (!range && film.music !== "none" && film.music !== undefined) {
     let rel = "assets/audio/music.wav";
@@ -886,19 +896,12 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     const unique = [...new Map(points.map((p) => [p.t, p])).values()].sort(
       (a, b) => a.t - b.t,
     );
-    const automation = voices.length
-      ? ` data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: "volume", points: unique }] }))}"`
-      : "";
-    audio.push(
-      `<audio id="film-music" src="${rel}" data-start="0"${film.music.from ? ` data-media-start="${film.music.from}"` : ""} data-duration="${film.duration}" data-volume="${volume}" data-fade-out="0.3" data-track-index="10"${automation}></audio>`,
-    );
+    mix.push({ id: "film-music", rel, start: 0, mediaStart: film.music.from || 0, seek: Boolean(film.music.from), duration: film.duration, volume, fadeIn: 0, fadeOut: 0.3, track: 10, automation: voices.length ? unique : null });
   }
   selectedTracks.forEach((a, i) => {
     const rel = `assets/audio/clip-${i}${path.extname(a.file)}`;
     fs.copyFileSync(a.file, path.join(outDir, rel));
-    audio.push(
-      `<audio id="film-audio-${i}" src="${rel}" data-start="${a.start}" data-media-start="${a.offset}" data-duration="${a.length}" data-volume="${a.volume}" data-fade-in="0.015" data-fade-out="0.03" data-track-index="${11 + i}"></audio>`,
-    );
+    mix.push({ id: `film-audio-${i}`, rel, start: a.start, mediaStart: a.offset, seek: true, duration: a.length, volume: a.volume, fadeIn: 0.015, fadeOut: 0.03, track: 11 + i });
   });
   // Footage sound, when asked for, is extracted once and placed like any other clip.
   if (!range)
@@ -906,10 +909,12 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
       if (!(v.volume > 0) || !v.audio) continue;
       const rel = `assets/audio/video-${key}.wav`;
       execFileSync("ffmpeg", ["-v", "error", "-y", "-ss", String(v.from), "-t", String(v.length), "-i", v.file, "-vn", "-ac", "2", "-ar", "48000", path.join(outDir, rel)], { stdio: ["ignore", "ignore", "pipe"] });
-      audio.push(
-        `<audio id="film-video-${esc(key)}" src="${rel}" data-start="${v.at}" data-duration="${v.length}" data-volume="${v.volume}" data-fade-in="0.015" data-fade-out="0.05" data-track-index="${60 + Object.keys(film.videos).indexOf(key)}"></audio>`,
-      );
+      mix.push({ id: `film-video-${key}`, rel, start: v.at, mediaStart: 0, duration: v.length, volume: v.volume, fadeIn: 0.015, fadeOut: 0.05, track: 60 + Object.keys(film.videos).indexOf(key) });
     }
+  const audio = mix.map(
+    (m) =>
+      `<audio id="${esc(m.id)}" src="${m.rel}" data-start="${m.start}"${m.seek ? ` data-media-start="${m.mediaStart}"` : ""} data-duration="${m.duration}" data-volume="${m.volume}"${m.fadeIn ? ` data-fade-in="${m.fadeIn}"` : ""} data-fade-out="${m.fadeOut}" data-track-index="${m.track}"${m.automation ? ` data-automation="${esc(JSON.stringify({ version: 1, lanes: [{ target: "volume", points: m.automation }] }))}"` : ""}></audio>`,
+  );
   const voiceTracks = selectedTracks.filter((a) => a.role === "voiceover");
   const narrationStem = voiceTracks.length
     ? path.join(outDir, "assets", "audio", "narration-stem.wav")
@@ -977,5 +982,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     narrationRequired: film.voiceover !== false,
     overlay,
     config,
+    // the sound of this cut, for the native mix (src/mix.mjs)
+    mix: mix.map((m) => ({ ...m, file: path.join(outDir, m.rel) })),
   };
 }

@@ -51,7 +51,7 @@ Every render also writes a cover, a contact sheet sampled from the **delivered M
 
 **Checks that eyes miss.** Render transcribes every narration clip with whisper and compares it with the script, flagging misreads such as "AI" spoken "A-A-I" or 重试 read as 重视 (`voiceover check` runs it alone). It measures every drawn string against the frame and the portrait safe area and reports text that runs off the edge or lands on other text (a new line appearing where the old one is still fading out), with its time. It also warns when a line leaves the screen before it can be read (0.3 s per word, 0.15 s per CJK character, plus 0.5 s) or sits on a background under WCAG contrast, and the motion lights fail a film that flashes more than three times in a second (WCAG 2.3.1). Each render keeps its exact inputs as a snapshot (`render --snapshot <id>` rebuilds that cut after the narration changed). `render --release` writes the files for platforms — x264 veryslow CRF 16 masters, a ≤45 MB copy for X when needed, covers — and a `release-manifest.json` of their hashes; `verify --manifest` proves a file is the current master before you upload it.
 
-**Not tied to one renderer.** `files` hands any local file (glb, vrm, hdr, wasm…) to a browser library as `window.filmFiles.<name>`. `"engine": {"type": "command", "command": ["blender", "-b", "-P", "scene.py", "--"]}` lets an external engine draw the picture: motion-use writes a job file, the command writes a PNG per frame, and everything after it is the same — sound, a composition drawn on top as a transparent overlay (subtitles over 3D, still measured by the text check), delivery checks, snapshots and release masters. `--workers 4` splits the frames across four processes. The job contract is in [references/film.md](references/film.md#external-engines).
+**Not tied to one renderer.** `files` hands any local file (glb, vrm, hdr, wasm…) to a browser library as `window.filmFiles.<name>`. `"engine": {"type": "command", "command": ["blender", "-b", "-P", "scene.py", "--"]}` lets an external engine draw the picture: motion-use writes a job file, the command writes a PNG per frame, and everything after it is the same — sound, a composition drawn on top as a transparent overlay (subtitles over 3D, still measured by the text check), delivery checks, snapshots and release masters. `--workers 4` splits the frames across four processes; an engine that declares `"stream": true` writes raw RGBA into a FIFO that FFmpeg encodes as it arrives, and `"parallel": true` gets one process with four threads. The job contract is in [references/film.md](references/film.md#external-engines).
 
 Full drawing/audio contract: [references/film.md](references/film.md). For an existing MP4, `motion-use verify file.mp4 --json` creates a review report without re-rendering it.
 
@@ -98,11 +98,12 @@ Full schema: [references/brief.md](references/brief.md). Examples: [examples/](e
 
 ## Requirements
 
-motion-use is a Node.js program, not a single native binary: rendering drives Chrome and FFmpeg.
+motion-use is a Node.js program with an optional native renderer: films draw in `motion-render` (Rust, Skia, V8; frames piped straight into FFmpeg, about twice as fast end to end) and fall back to Chrome for WebGL or when the binary is missing.
 
 - Node.js 22 or newer (the installer checks)
 - FFmpeg (`brew install ffmpeg`, `apt install ffmpeg`)
-- Chrome: your installed Chrome, or `motion-use doctor --install-browser`
+- motion-render: installed by install.sh from the same release (macOS and Linux, arm64 and x64)
+- Chrome: your installed Chrome, or `motion-use doctor --install-browser` (scene templates, WebGL films, the reference renderer)
 
 Verified on macOS (Apple Silicon). The CI workflow runs the tests and a real render on macOS and Ubuntu. Windows is not supported yet.
 
@@ -122,7 +123,7 @@ The installer downloads the release archive and its `.sha256` from GitHub, verif
 | `reference <url>` | Save a published piece for study (a [Prompt Motion](https://prompt-motion.com) entry, or any page with a `VideoObject`): creator and post, the prompt or skill, the video and its breakdown, in a git-ignored `references/<slug>/`. The prompt stays its creator's: paraphrase, never paste |
 | `beats <audio>` | Measure a song: tempo, first downbeat, bar loudness, the drop; prints the `music` line that starts the film on a downbeat |
 | `compare <a> <b>` | Frames of two videos side by side: `--times 1.5,4` |
-| `doctor` | Check Node, FFmpeg, Chrome, the engine and fonts |
+| `doctor` | Check Node, FFmpeg, Chrome, the engine, the native renderer and fonts |
 | `upgrade` | Update the CLI and its skill; `--check` only looks |
 
 All commands take `--json`. `still` and `render` take `--lang`, `--format` and `--out`.

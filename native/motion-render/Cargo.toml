@@ -1,6 +1,6 @@
 [package]
 name = "motion-render"
-version = "0.1.0"
+version = "0.11.0"
 edition = "2021"
 description = "Native renderer for motion-use films: drawFrame on a Canvas 2D over Skia, JS in V8"
 license = "MIT"
@@ -16,6 +16,12 @@ png = "0.17"
 sha2 = "0.10"
 woff2-patched = "0.4"
 unicode-script = "0.5"
+
+# rust-skia publishes Linux binaries with svg + textlayout + webp only in its ganesh + vulkan build; without
+# this feature cargo compiles Skia from source on Linux (and that build fails on GCC 12's ranges).
+# The renderer still draws on the CPU.
+[target.'cfg(target_os = "linux")'.dependencies]
+skia-safe = { version = "=0.153.3", features = ["ganesh", "vulkan"] }
 
 [features]
 default = ["embed-fonts"]

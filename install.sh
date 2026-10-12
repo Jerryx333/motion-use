@@ -17,6 +17,11 @@
 #   MOTION_USE_VERSION  version to install (default: latest release)
 #   MOTION_USE_ARCHIVE  install from this local .tar.gz instead of downloading (checksum file next to it)
 #   MOTION_USE_SKILL=0  do not link the agent skill into ~/.agents/skills
+#   MOTION_USE_NATIVE=0 do not install the native renderer (motion-render); films then render in Chrome
+#   MOTION_RENDER_ARCHIVE install motion-render from this local .tar.gz (checksum file next to it)
+#
+# The native renderer of the same release (motion-render-vX.Y.Z-<os>-<arch>.tar.gz, macOS and
+# Linux on arm64/x64) goes into versions/X.Y.Z/native/bin when the release has one for this machine.
 set -eu
 
 REPO="leeguooooo/motion-use"
@@ -96,6 +101,47 @@ rmdir "$stage"
 mv "$src" "$stage"
 say "installing dependencies (npm ci)"
 (cd "$stage" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error) || { rm -rf "$stage"; die "npm ci failed"; }
+
+# The native renderer (motion-render) of the same release, for this platform, into native/bin of
+# this version, where motion-use looks first. Optional: without it films render in Chrome.
+native_os=""; native_arch=""
+case "$(uname -s)" in Darwin) native_os=darwin ;; Linux) native_os=linux ;; esac
+case "$(uname -m)" in arm64|aarch64) native_arch=arm64 ;; x86_64|amd64) native_arch=x64 ;; esac
+native_name="motion-render-v$version-$native_os-$native_arch.tar.gz"
+native_archive=""
+if [ "${MOTION_USE_NATIVE:-1}" = 0 ]; then
+  say "native renderer: skipped (MOTION_USE_NATIVE=0); films render in Chrome"
+elif [ -z "$native_os" ] || [ -z "$native_arch" ]; then
+  say "native renderer: no build for $(uname -s) $(uname -m); films render in Chrome"
+elif [ -n "${MOTION_RENDER_ARCHIVE:-}" ]; then
+  native_archive="$MOTION_RENDER_ARCHIVE"
+  cp "$native_archive.sha256" "$tmp/native.sha256" 2>/dev/null || native_archive=""
+elif [ -n "${MOTION_USE_ARCHIVE:-}" ]; then
+  say "native renderer: not installed from a local archive (set MOTION_RENDER_ARCHIVE); films render in Chrome"
+else
+  nbase="https://github.com/$REPO/releases/download/v$version/$native_name"
+  if curl -fsSL "$nbase" -o "$tmp/native.tar.gz" 2>/dev/null && curl -fsSL "$nbase.sha256" -o "$tmp/native.sha256" 2>/dev/null; then
+    native_archive="$tmp/native.tar.gz"
+  else
+    say "native renderer: $native_name is not in the release; films render in Chrome"
+  fi
+fi
+if [ -n "$native_archive" ]; then
+  if [ "$(cut -d' ' -f1 < "$tmp/native.sha256")" = "$(sha256 "$native_archive")" ]; then
+    mkdir -p "$tmp/n" "$stage/native/bin"
+    tar -xzf "$native_archive" -C "$tmp/n"
+    nbin=$(find "$tmp/n" -type f -name motion-render | head -1)
+    if [ -n "$nbin" ] && cp "$nbin" "$stage/native/bin/motion-render" && chmod +x "$stage/native/bin/motion-render" && "$stage/native/bin/motion-render" --version >/dev/null 2>&1; then
+      say "native renderer: $("$stage/native/bin/motion-render" --version)"
+    else
+      rm -rf "$stage/native/bin"
+      say "native renderer: the downloaded binary does not run here; films render in Chrome"
+    fi
+  else
+    say "native renderer: checksum mismatch, not installed; films render in Chrome"
+  fi
+fi
+
 node -e 'const [f, version, home, bin_dir] = process.argv.slice(1); require("fs").writeFileSync(f, JSON.stringify({ version, home, bin_dir }) + "\n")' \
   "$stage/$RECEIPT" "$version" "$HOME_DIR" "$BIN_DIR"
 rm -rf "$dest"

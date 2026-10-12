@@ -86,12 +86,21 @@ Optional `libraries: ["vendor/library.js"]` loads explicit local classic browser
 
 `motionBlur` samples 1/2/4 subframes over a 0–1 frame backward shutter and averages the rendered canvases. The sampling order is deterministic. Default: one sample, no blur. Tune exposure for readable movement; blur does not rescue an unclear layout.
 
+## Renderers
+
+Two renderers draw the same built page (`index.html`, runtime, kit, fonts) and deliver the same film:
+
+- **native** — `motion-render` (`native/`, Skia on the CPU, the drawing code in V8). Frames go as raw RGBA through a pipe into one ffmpeg; the sound is mixed by ffmpeg from film.json; the text check runs the same probe in its V8. About twice as fast end to end (ocs-film draft 12 s vs 26 s), byte-identical between runs. `install.sh` installs it for macOS and Linux (arm64, x64); in a checkout, `cargo build --release --manifest-path native/Cargo.toml`. `MOTION_RENDER=<path>` picks a binary, `MOTION_RENDER=0` turns it off.
+- **chrome** — HyperFrames in Chrome: the reference, the fallback, and the only one with WebGL for now.
+
+`--renderer auto` (default; film.json `"renderer"` pins one) uses native when motion-render is installed and the drawing has no WebGL/WebGPU (`getContext("webgl")`, a three.js bundle in `libraries`); a context it cannot create at render time also falls back to Chrome with a note. `--gpu` is Chrome's GPU path. `--workers n` is motion-render's thread count (default: cores, at most 8). Reports, JSON results and release manifests say which renderer made the file (`renderer`). Pixels match Chrome to SSIM ≥ 0.99 on the 2D examples (whiteboard's scaled paper texture 0.98); the mix to ±0.5 dB.
+
 ## External engines
 
 The browser canvas is the default engine (`"engine": {"type": "browser"}` or no `engine`). A scene that belongs in Blender, Unity, Godot or a native renderer can draw the picture instead, while motion-use keeps everything around it:
 
 ```json
-"engine": {"type": "command", "command": ["blender", "-b", "-P", "scene.py", "--"], "cwd": ".", "env": {"SCENE_QUALITY": "final"}}
+"engine": {"type": "command", "command": ["blender", "-b", "-P", "scene.py", "--"], "cwd": ".", "env": {"SCENE_QUALITY": "final"}, "stream": false, "parallel": false}
 ```
 
 `command` is an argv array (no shell). Arguments that name a file in the film folder (`scene.py`, `shot.blend`) are passed as absolute paths; `cwd` (default: the film folder) and `env` are optional. The command runs arbitrary local code, so `still` and `render` need `--allow-code`, and validation says so. `composition` becomes optional: without it the picture is the engine's alone.
@@ -114,11 +123,13 @@ For each language and format, motion-use writes a job file and runs the command 
 - Write every frame `k` from `frames.from` to `frames.to` (inclusive) as `out/<pattern>`: `00000.png` is film time 0, frame `k` shows time `k / fps`. Indices stay film frames in a range: `render --from 1 --to 2` at 30 fps asks for `{from: 30, to: 59}` → `00030.png…00059.png`.
 - PNG, RGB or RGBA, exactly `width × height`; alpha is flattened on black. Exit 0 when done. A missing frame, another size or a non-zero exit fails the render with the frame name, the size found or the command's last output lines.
 - **Determinism**: draw frame N from time N/fps only — no state carried from the previous frame, no clocks, no unseeded noise. motion-use may split a range among processes (`--workers 4`: four contiguous chunks, four processes at once; default 1) and `still` asks for single frames (`{from: k, to: k}`, time `t` → frame ⌊t·fps⌋).
-- `safe` is `view.safe` in pixels: keep text and the key action inside it in portrait. `captions` are the narration cues `M.captions` would draw.
+- `safe` is `view.safe` in pixels: keep text and the key action inside it in portrait. `captions` are the narration cues `M.captions` would draw. `film.videos` lists the footage frames motion-use extracted for this cut (absolute folders).
+- **Raw stream** (`"stream": true` in `engine`): the job also carries `"formats": ["png", "rgba-stream"]` and `"stream": "<fifo path>"`. Write every frame in order, `width × height × 4` bytes of straight RGBA, into that FIFO instead of PNGs; motion-use encodes them as they arrive (one process, no PNG sequence on disk). Fewer frames than asked fails the render. Not on Windows.
+- **Parallel** (`"parallel": true`): one process gets the whole range and `"workers": n` (motion-use's `--workers`, default the cores up to 8) instead of n processes on chunks, so threads are not multiplied by processes. `motion-render` as the command gets both automatically.
 
-motion-use then encodes the sequence at the film's fps and continues unchanged: music, sound effects and narration mixed and normalized, decode/duration/loudness checks, motion lights, contact sheet, cover, snapshot, `--release` masters and manifest, `verify`. The mix comes from the same HyperFrames page as a browser film, rendered as a transparent layer.
+motion-use then encodes the sequence at the film's fps and continues unchanged: music, sound effects and narration mixed and normalized, decode/duration/loudness checks, motion lights, contact sheet, cover, snapshot, `--release` masters and manifest, `verify`. The mix is made by ffmpeg from film.json (the same placement, volumes, ducking and fades as a browser film); nothing is captured in Chrome when there is no composition. The command gets `MOTION_USE_ROOT` (this motion-use's folder) in its environment.
 
-**Overlay.** With both `engine` (command) and `composition`, the composition is drawn as a transparent layer over the engine frames: `drawFrame` gets a cleared canvas and must not paint a background (motion blur is off for the layer). Subtitles, labels and callouts over a 3D picture belong there: the text check measures them as for any film (contrast is judged against the transparent layer, not the engine picture underneath). Without a composition the report says `text_check: {skipped: "external engine"}`: text the engine draws is pixels.
+**Overlay.** With both `engine` (command) and `composition`, the composition is drawn as a transparent layer over the engine frames, by motion-render when it is installed (straight into the encode) or as a transparent capture in Chrome: `drawFrame` gets a cleared canvas and must not paint a background (motion blur is off for the layer). Subtitles, labels and callouts over a 3D picture belong there: the text check measures them as for any film (contrast is judged against the transparent layer, not the engine picture underneath). Without a composition the report says `text_check: {skipped: "external engine"}`: text the engine draws is pixels.
 
 **Snapshot.** film.json, and with it the command line, is in every snapshot; files the command names inside the project and every declared `files` entry are stored like drawing code. A file the engine reads that is neither (a module `scene.py` imports, a texture folder) is not: pass it as an argument or declare it under `files`, which the job lists with absolute paths.
 

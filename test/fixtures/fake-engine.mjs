@@ -4,6 +4,7 @@
 // so frame k is the same picture whichever process or range draws it.
 // FAKE_ENGINE_LOG: a file to append each job to. FAKE_ENGINE_DROP=n: leave out the last n frames.
 // FAKE_ENGINE_SIZE=WxH: draw at the wrong size. FAKE_ENGINE_FAIL=1: exit with an error.
+// Given a stream job (engine "stream": true) it writes raw RGBA into the FIFO the job names.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +30,9 @@ if (last >= from)
     "-f", "lavfi", "-i", `color=c=0x2a9d8f:s=${w}x${h}:r=${job.fps}`,
     "-f", "lavfi", "-i", `testsrc2=s=320x180:r=${job.fps}`,
     "-filter_complex", `[0:v][1:v]overlay=x='mod(n*37,${w - 320})':y=${Math.round(h / 2)},select='between(n,${from},${last})'`,
-    "-frames:v", String(last - from + 1), "-fps_mode", "passthrough", "-start_number", String(from),
-    path.join(job.out, job.pattern),
+    "-frames:v", String(last - from + 1), "-fps_mode", "passthrough",
+    // A streaming job ("formats": [..., "rgba-stream"], "stream": <fifo>): raw RGBA in order instead of PNGs.
+    ...(job.stream && job.formats?.includes("rgba-stream")
+      ? ["-f", "rawvideo", "-pix_fmt", "rgba", job.stream]
+      : ["-start_number", String(from), path.join(job.out, job.pattern)]),
   ]);

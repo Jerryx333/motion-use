@@ -238,9 +238,9 @@ pub const SANS_TTF: &[u8] = include_bytes!("../../../assets/fonts/NotoSansSC[wgh
 #[cfg(feature = "embed-fonts")]
 pub const MONO_TTF: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono[wght].ttf");
 
-/// Film Sans / Film Mono for a synthesised page: motion-use's fonts folder when we can find it
-/// (MOTION_USE_ROOT, or next to this binary in a checkout), else the copies built into the binary.
-fn bundled_fonts() -> Result<Vec<FontFace>> {
+/// Where motion-use's own files may be: MOTION_USE_ROOT (motion-use sets it to itself), or a
+/// checkout this binary was built in.
+fn motion_use_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = vec![];
     if let Ok(r) = std::env::var("MOTION_USE_ROOT") {
         roots.push(PathBuf::from(r));
@@ -250,7 +250,26 @@ fn bundled_fonts() -> Result<Vec<FontFace>> {
             roots.push(a.to_path_buf());
         }
     }
-    for r in roots {
+    roots
+}
+
+/// motion-use's film runtime or kit from the motion-use that runs us, so a job page matches the
+/// pages that version builds; the copy built into the binary otherwise.
+fn motion_use_script(rel: &str, built_in: &str) -> String {
+    for r in motion_use_roots() {
+        if r.join("package.json").exists() {
+            if let Ok(code) = std::fs::read_to_string(r.join(rel)) {
+                return code;
+            }
+        }
+    }
+    built_in.to_string()
+}
+
+/// Film Sans / Film Mono for a synthesised page: motion-use's fonts folder when we can find it
+/// (MOTION_USE_ROOT, or next to this binary in a checkout), else the copies built into the binary.
+fn bundled_fonts() -> Result<Vec<FontFace>> {
+    for r in motion_use_roots() {
         let sans = r.join("assets/fonts/NotoSansSC[wght].ttf");
         let mono = r.join("assets/fonts/JetBrainsMono[wght].ttf");
         if sans.exists() && mono.exists() {
@@ -280,8 +299,11 @@ pub fn from_job(job: &Value, draw: &Path) -> Result<Page> {
     let film_json: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("film.json")).context("reading film.json")?)?;
     let w = job["width"].as_i64().ok_or_else(|| anyhow!("job.width missing"))?;
     let h = job["height"].as_i64().ok_or_else(|| anyhow!("job.height missing"))?;
-    if film_json.get("videos").map(|v| v.as_object().map(|o| !o.is_empty()).unwrap_or(false)).unwrap_or(false) {
-        return Err(anyhow!("film.json declares videos: footage is not supported by motion-render's job mode yet (render the page motion-use builds instead)"));
+    // Footage: motion-use extracts the frames and passes their folders (absolute) in job.film.videos.
+    let videos = film.get("videos").cloned().unwrap_or(json!({}));
+    let declared = film_json.get("videos").map(|v| v.as_object().map(|o| !o.is_empty()).unwrap_or(false)).unwrap_or(false);
+    if declared && videos.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return Err(anyhow!("film.json declares videos but the job carries no extracted frames (job.film.videos): update motion-use, or render the page motion-use builds"));
     }
     let config = json!({
         "captions": film["captions"],
@@ -298,7 +320,7 @@ pub fn from_job(job: &Value, draw: &Path) -> Result<Page> {
         "data": film["data"],
         "offset": 0,
         "guides": false,
-        "videos": {},
+        "videos": videos,
         "assets": film.get("assets").cloned().unwrap_or(json!({})),
         "files": film.get("files").cloned().unwrap_or(json!({})),
         "overlay": false,
@@ -310,10 +332,10 @@ pub fn from_job(job: &Value, draw: &Path) -> Result<Page> {
             scripts.push(Script { name: f.display().to_string(), code: std::fs::read_to_string(&f).with_context(|| format!("library {}", f.display()))? });
         }
     }
-    scripts.push(Script { name: "kit.js".into(), code: KIT_JS.into() });
+    scripts.push(Script { name: "kit.js".into(), code: motion_use_script("src/film-kit.js", KIT_JS) });
     let draw = if draw.is_absolute() { draw.to_path_buf() } else { dir.join(draw) };
     scripts.push(Script { name: draw.display().to_string(), code: std::fs::read_to_string(&draw).with_context(|| format!("drawing {}", draw.display()))? });
-    scripts.push(Script { name: "runtime.js".into(), code: RUNTIME_JS.into() });
+    scripts.push(Script { name: "runtime.js".into(), code: motion_use_script("src/film-runtime.js", RUNTIME_JS) });
     Ok(Page {
         base: dir,
         elements: vec![

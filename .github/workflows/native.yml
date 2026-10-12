@@ -1,0 +1,74 @@
+name: Native renderer
+# Builds motion-render (native/) on each platform's own runner: rusty_v8 and skia-safe download
+# prebuilt V8 and Skia for all four targets, so nothing is cross-compiled. Each build is smoke-tested
+# (a film page streamed into ffmpeg, the text probe) and packaged as
+# motion-render-v<version>-<os>-<arch>.tar.gz + .sha256; release.yml attaches them to the release.
+on:
+  pull_request:
+    paths: ["native/**", ".github/workflows/native.yml", "src/film-runtime.js", "src/film-kit.js"]
+  workflow_dispatch:
+  workflow_call:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, os: darwin, arch: arm64 }
+          - { runner: macos-15-intel, os: darwin, arch: x64 }
+          - { runner: ubuntu-22.04, os: linux, arch: x64 }
+          - { runner: ubuntu-22.04-arm, os: linux, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: system packages
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q ffmpeg libfontconfig1-dev libfreetype6-dev
+          else
+            brew install ffmpeg
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: native-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('native/Cargo.lock') }}
+      # Fonts come from motion-use (MOTION_USE_ROOT, or the install next to the binary), not the binary.
+      - run: cargo build --release --locked --no-default-features --manifest-path native/Cargo.toml
+      - name: version matches package.json
+        run: test "$(native/target/release/motion-render --version)" = "motion-render $(node -p 'require("./package.json").version')"
+      - name: smoke test
+        run: |
+          npm ci --ignore-scripts
+          export MOTION_USE_ROOT="$PWD"
+          native/target/release/motion-render --capabilities
+          node native/bench/build-page.mjs examples/kinetic en landscape "$RUNNER_TEMP/page" 0 2
+          native/target/release/motion-render probe "$RUNNER_TEMP/page/index.html" --times 0.5,1 > "$RUNNER_TEMP/probe.json"
+          node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1]));if(!r.samples[0].boxes.length)process.exit(1)' "$RUNNER_TEMP/probe.json"
+          native/target/release/motion-render render "$RUNNER_TEMP/page/index.html" --frames 0-59 --workers 2 --stream - \
+            | ffmpeg -v error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -framerate 30 -i - -c:v libx264 -preset ultrafast "$RUNNER_TEMP/smoke.mp4"
+          test "$(ffprobe -v error -count_frames -select_streams v -show_entries stream=nb_read_frames -of csv=p=0 "$RUNNER_TEMP/smoke.mp4")" = 60
+      - name: package
+        run: |
+          v=$(node -p 'require("./package.json").version')
+          name="motion-render-v$v-${{ matrix.os }}-${{ matrix.arch }}"
+          mkdir -p "dist/$name"
+          cp native/target/release/motion-render "dist/$name/"
+          cp LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && if command -v sha256sum >/dev/null; then sha256sum "$name.tar.gz"; else shasum -a 256 "$name.tar.gz"; fi > "$name.tar.gz.sha256")
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: motion-render-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error

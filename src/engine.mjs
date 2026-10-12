@@ -2,11 +2,18 @@
 // as a PNG sequence; motion-use keeps everything around it — sound, captions overlay, encoding,
 // delivery checks, snapshots and release masters. The contract is a job file per process:
 // render frames `from`…`to` (inclusive, frame k shows film time k/fps) into `out` as `pattern`.
+// An engine that declares "stream": true is offered a FIFO instead ("formats": ["png",
+// "rgba-stream"], "stream": <path>): frames in order as raw straight RGBA, w×h×4 bytes each, which
+// motion-use encodes as they arrive. "parallel": true gets one process for the whole range and
+// motion-use's --workers as "workers".
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { claimDir } from "./build.mjs";
 import { safeBox } from "./film.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const PATTERN = "%05d.png";
 const frameName = (k) => `${String(k).padStart(5, "0")}.png`;
@@ -30,9 +37,11 @@ export function splitFrames({ from, to }, n) {
 }
 
 /** What the engine is told: the resolved film for this language and format, and what to draw. */
-export function engineJob(film, proj, frames, out) {
+export function engineJob(film, proj, frames, out, extra = {}) {
   const { w, h } = proj.fmt,
     c = proj.config;
+  // footage frames motion-use extracted for this cut, by absolute folder
+  const videos = Object.fromEntries(Object.entries(c.videos ?? {}).map(([k, v]) => [k, { ...v, dir: path.join(proj.dir, v.dir) }]));
   return {
     version: 1,
     film: {
@@ -50,6 +59,7 @@ export function engineJob(film, proj, frames, out) {
       captions: c.captions,
       files: { ...film.files },
       assets: { ...film.fileAssets },
+      videos,
     },
     lang: proj.lang,
     format: proj.format,
@@ -61,7 +71,23 @@ export function engineJob(film, proj, frames, out) {
     out,
     pattern: PATTERN,
     safe: safeBox(w, h),
+    ...extra,
   };
+}
+
+// MOTION_USE_ROOT: motion-render (as an engine) loads this motion-use's runtime, kit and fonts.
+const engineEnv = (engine, jobFile) => ({ ...process.env, MOTION_USE_ROOT: ROOT, ...engine.env, MOTION_USE_JOB: jobFile });
+
+/**
+ * Start a streaming engine over one range: its job asks for raw RGBA into `fifo`. Returns the
+ * child; stdout and stderr are piped for the caller to read.
+ */
+export function startStreamingEngine(film, proj, frames, { work, fifo, workers }) {
+  const jobFile = path.join(work, "job-0.json");
+  const extra = { formats: ["png", "rgba-stream"], stream: fifo, ...(film.engine.parallel ? { workers } : {}) };
+  fs.writeFileSync(jobFile, JSON.stringify(engineJob(film, proj, frames, path.join(work, "frames"), extra), null, 2) + "\n");
+  const [cmd, ...args] = film.engine.command;
+  return spawn(cmd, [...args, "--job", jobFile], { cwd: film.engine.cwd, env: engineEnv(film.engine, jobFile), stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function runOne(engine, jobFile, log) {
@@ -70,7 +96,7 @@ function runOne(engine, jobFile, log) {
     let tail = "";
     const child = spawn(cmd, [...args, "--job", jobFile], {
       cwd: engine.cwd,
-      env: { ...process.env, ...engine.env, MOTION_USE_JOB: jobFile },
+      env: engineEnv(engine, jobFile),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const take = (d) => {
@@ -88,7 +114,7 @@ function runOne(engine, jobFile, log) {
  * Run the engine over `chunks` (inclusive frame ranges), at most `workers` processes at a time,
  * into a fresh work folder. Resolves { ok, frames: <dir>, error }.
  */
-export async function runEngine(film, proj, chunks, { workers = 1, work, log } = {}) {
+export async function runEngine(film, proj, chunks, { workers = 1, work, log, extra = {} } = {}) {
   claimDir(work);
   const frames = path.join(work, "frames");
   fs.mkdirSync(frames);
@@ -97,7 +123,7 @@ export async function runEngine(film, proj, chunks, { workers = 1, work, log } =
   const next = async () => {
     for (let item = queue.shift(); item; item = queue.shift()) {
       const jobFile = path.join(work, `job-${item.i}.json`);
-      fs.writeFileSync(jobFile, JSON.stringify(engineJob(film, proj, item.frames, frames), null, 2) + "\n");
+      fs.writeFileSync(jobFile, JSON.stringify(engineJob(film, proj, item.frames, frames, extra), null, 2) + "\n");
       const r = await runOne(film.engine, jobFile, log);
       if (r.code !== 0) failed.push(`frames ${item.frames.from}–${item.frames.to} exited with ${r.code}: ${r.tail.trim().split("\n").slice(-10).join("\n")}`);
     }
@@ -146,26 +172,75 @@ function ffmpeg(args) {
   }
 }
 
-// x264 settings per --quality; a release renders near-lossless first, like the browser path.
-const X264 = { draft: ["veryfast", "23"], looks: ["medium", "16"], delivery: ["slow", "14"] };
+// x264 settings per --quality, as HyperFrames encodes the browser path (hyperframes 0.8.123:
+// draft = ultrafast 28, looks = medium 16, delivery = slow 15; a release passes CRF 10 and the
+// platform masters are encoded from that). Every renderer uses this one table.
+export const X264 = { draft: ["ultrafast", 28], looks: ["medium", 16], delivery: ["slow", 15] };
+const BT709 = "scale=out_color_matrix=bt709:out_range=tv:flags=neighbor";
 
 /**
- * Engine frames, alpha flattened on black, with the browser layer (a transparent MOV that also
- * carries the film's mix) on top, encoded as the MP4 the rest of the pipeline checks.
+ * Encoder arguments for one video stream: HyperFrames' raw-frame encode (same preset, CRF,
+ * x264 params, BT.709 conversion and tags), so the native and browser files match. `vf` replaces
+ * the colour conversion when a filter graph already ends in it.
  */
-export function compositeVideo({ frames, range, layer, fps, w, h, quality = "looks", crf, out }) {
+export function encodeArgs({ quality = "looks", crf, fps, raw = true, vf = true }) {
   const [preset, q] = X264[quality] ?? X264.looks;
+  const color = "colorprim=bt709:transfer=bt709:colormatrix=bt709";
+  return [
+    "-r", String(fps),
+    "-c:v", "libx264", "-preset", preset, "-crf", String(crf ?? q), "-bf", "0",
+    "-x264-params", preset === "ultrafast" ? `aq-mode=3:${color}` : `aq-mode=3:aq-strength=0.8:deblock=1,1:${color}`,
+    "-colorspace:v", "bt709", "-color_primaries:v", "bt709", "-color_trc:v", "bt709", "-color_range", "tv",
+    ...(vf ? ["-vf", raw ? BT709 : `${BT709},format=yuv420p`] : []),
+    "-video_track_timescale", "90000", "-pix_fmt", "yuv420p",
+  ];
+}
+
+/**
+ * Engine frames (a PNG sequence, or a raw RGBA stream from a FIFO), alpha flattened on black,
+ * with an overlay on top (a transparent MOV from the browser, or motion-render's raw RGBA on
+ * stdin) and the film's mix (a WAV, or the MOV's own sound), encoded as the MP4 the rest of the
+ * pipeline checks. Returns the ffmpeg arguments; compositeVideo runs them.
+ */
+export function compositeArgs({ frames, stream, range, layer, overlayRaw, audio, fps, w, h, quality = "looks", crf, out }) {
   const count = range.to - range.from + 1;
-  ffmpeg([
+  const inputs = [
     "-f", "lavfi", "-i", `color=c=black:s=${w}x${h}:r=${fps}`,
-    "-framerate", String(fps), "-start_number", String(range.from), "-i", path.join(frames, PATTERN),
-    "-i", layer,
-    "-filter_complex", `[0:v][1:v]overlay=shortest=1[b];[b][2:v]overlay=eof_action=pass,scale=out_color_matrix=bt709,format=yuv420p[v]`,
-    "-map", "[v]", "-map", "2:a?", "-frames:v", String(count), "-r", String(fps),
-    "-c:v", "libx264", "-preset", preset, "-crf", String(crf ?? q),
-    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+    ...(stream
+      ? ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w}x${h}`, "-framerate", String(fps), "-i", stream]
+      : ["-framerate", String(fps), "-start_number", String(range.from), "-i", path.join(frames, PATTERN)]),
+  ];
+  let n = 2,
+    graph = "[0:v][1:v]overlay=shortest=1[b]",
+    last = "b",
+    sound = null;
+  if (overlayRaw) {
+    inputs.push("-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w}x${h}`, "-framerate", String(fps), "-i", "pipe:0");
+    graph += `;[b][${n}:v]overlay=eof_action=pass[o]`;
+    ((last = "o"), n++);
+  } else if (layer) {
+    inputs.push("-i", layer);
+    graph += `;[b][${n}:v]overlay=eof_action=pass[o]`;
+    sound = `${n}:a?`;
+    ((last = "o"), n++);
+  }
+  if (audio) {
+    inputs.push("-i", audio);
+    sound = `${n}:a:0`;
+    n++;
+  }
+  graph += `;[${last}]${BT709},format=yuv420p[v]`;
+  return [
+    ...inputs,
+    "-filter_complex", graph,
+    "-map", "[v]", ...(sound ? ["-map", sound] : []), "-frames:v", String(count),
+    ...encodeArgs({ quality, crf, fps, vf: false }),
     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", out,
-  ]);
+  ];
+}
+
+export function compositeVideo(o) {
+  ffmpeg(compositeArgs(o));
 }
 
 /** One still: the engine frame on black with the browser layer's PNG (if any) on top. */

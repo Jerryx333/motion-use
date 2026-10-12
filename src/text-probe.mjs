@@ -310,31 +310,41 @@ async function browser() {
  * Draw a built film project at every `step` seconds and return the text runs that leave the
  * frame (all formats) or the safe area (portrait). Returns { runs, samples } or { skipped }.
  */
-export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3 } = {}) {
+export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3, native = null } = {}) {
   const times = [];
   for (let t = 0; t < duration - 1e-6; t += step) times.push(+t.toFixed(3));
   let server, b;
   try {
-    server = await serve(projDir);
-    b = await browser();
-    const page = await b.newPage();
+    // The probe is the film runtime's own JS: in Chrome, or in motion-render's V8 (same page).
+    let draw;
     const errors = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(`http://127.0.0.1:${server.address().port}/index.html`, { waitUntil: "load", timeout: 60000 });
-    await page.waitForFunction(() => typeof window.__motionUseTextProbe === "function", { timeout: 30000 });
-    const all = [];
-    let meta = null;
-    for (let i = 0; i < times.length; i += 100) {
-      const r = await page.evaluate((ts) => window.__motionUseTextProbe(ts), times.slice(i, i + 100));
-      meta = r;
-      all.push(...r.samples);
+    if (native) {
+      const { nativeProbe } = await import("./native.mjs");
+      draw = (ts) => nativeProbe({ bin: native.bin, projDir, times: ts, work: path.join(projDir, ".probe") });
+    } else {
+      server = await serve(projDir);
+      b = await browser();
+      const page = await b.newPage();
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.goto(`http://127.0.0.1:${server.address().port}/index.html`, { waitUntil: "load", timeout: 60000 });
+      await page.waitForFunction(() => typeof window.__motionUseTextProbe === "function", { timeout: 30000 });
+      draw = async (ts) => {
+        const out = { samples: [] };
+        for (let i = 0; i < ts.length; i += 100) {
+          const r = await page.evaluate((x) => window.__motionUseTextProbe(x), ts.slice(i, i + 100));
+          Object.assign(out, r, { samples: [...out.samples, ...r.samples] });
+        }
+        return out;
+      };
     }
-    if (!meta) return { runs: [], samples: 0 };
+    if (!times.length) return { runs: [], samples: 0 };
+    const meta = await draw(times);
+    const all = meta.samples;
     const runs = overflowRuns(all, { width: meta.width, height: meta.height, safe: meta.safe, vertical: meta.vertical, step, minRun });
     // Cross-fades are shorter than the sampling step: re-draw every frame where text changes.
     const fine = transitionTimes(all, meta.fps || 30);
     const dense = [...all];
-    for (let i = 0; i < fine.length; i += 100) dense.push(...(await page.evaluate((ts) => window.__motionUseTextProbe(ts), fine.slice(i, i + 100))).samples);
+    if (fine.length) dense.push(...(await draw(fine)).samples);
     dense.sort((a, b) => a.t - b.t);
     return {
       samples: dense.length,
@@ -347,6 +357,7 @@ export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3 } 
         ...contrastRuns(all, { step, minRun }),
       ].sort((a, b) => a.from - b.from),
       page_errors: errors.slice(0, 5),
+      renderer: native ? "native" : "chrome",
     };
   } catch (e) {
     return { skipped: `text check did not run: ${e.message.split("\n")[0]}` };

@@ -765,6 +765,13 @@ impl Engine {
         }
         Ok(size)
     }
+
+    /// Run motion-use's text probe (film pages only) over `times` (a JSON array of seconds).
+    pub fn text_probe(&mut self, times: &str) -> Result<String> {
+        self.eval("probe", &format!("__mr.textProbe({})", times))?;
+        self.settle("text probe", true)?;
+        self.eval("probe result", "__mr.probeResult")
+    }
 }
 
 impl Drop for Engine {

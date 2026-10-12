@@ -1072,5 +1072,17 @@
         fail(e);
       }
     },
+    // motion-use's text check: the film runtime's own probe (__motionUseTextProbe), result as JSON.
+    textProbe(times) {
+      state = "idle";
+      failure = null;
+      G.__mr.probeResult = "";
+      try {
+        if (typeof G.__motionUseTextProbe !== "function") throw new Error("page has no text probe (window.__motionUseTextProbe)");
+        settle(G.__motionUseTextProbe(times).then((r) => (G.__mr.probeResult = JSON.stringify(r))));
+      } catch (e) {
+        fail(e);
+      }
+    },
   };
 })();

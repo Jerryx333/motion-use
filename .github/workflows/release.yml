@@ -5,7 +5,10 @@ on:
 permissions:
   contents: write
 jobs:
+  native:
+    uses: ./.github/workflows/native.yml
   release:
+    needs: native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,6 +19,7 @@ jobs:
         run: |
           test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
           test "v$(node -p 'require("./.claude-plugin/plugin.json").version')" = "$GITHUB_REF_NAME"
+          grep -q "^version = \"${GITHUB_REF_NAME#v}\"" native/motion-render/Cargo.toml
       - name: ffmpeg (the media tests probe and cut real files)
         run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
       - run: npm ci --ignore-scripts
@@ -27,7 +31,13 @@ jobs:
         run: |
           MOTION_USE_HOME="$RUNNER_TEMP/h" MOTION_USE_BIN_DIR="$RUNNER_TEMP/b" MOTION_USE_SKILL=0 MOTION_USE_ARCHIVE="$(ls dist/motion-use-v*.tar.gz)" sh install.sh
           "$RUNNER_TEMP/b/motion-use" --version
+      # motion-render for each platform, built by native.yml
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: motion-render-*
+          path: dist
+          merge-multiple: true
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/motion-use-v*.tar.gz dist/motion-use-v*.tar.gz.sha256 --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/motion-use-v*.tar.gz dist/motion-use-v*.tar.gz.sha256 dist/motion-render-v*.tar.gz dist/motion-render-v*.tar.gz.sha256 --title "$GITHUB_REF_NAME" --generate-notes
