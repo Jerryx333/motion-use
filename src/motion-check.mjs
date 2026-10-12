@@ -25,6 +25,8 @@ export const MOTION_LIMITS = {
   worst_window_fast_ratio: { yellow: 0.02, low: true },
   longest_still_s: { yellow: 6 },
   max_event_gap_s: { yellow: 15 },
+  // flashes in the densest second; WCAG 2.3.1 allows three
+  flashes_per_s: { yellow: 3, red: 3.5 },
 };
 export const SHORT_S = 20;
 
@@ -151,6 +153,62 @@ function bluePurple(file, w, h) {
   return { share: n ? bad.filter(Boolean).length / n : 0, spans };
 }
 
+// General flashes after WCAG 2.3.1 (three flashes or below threshold): a transition is a swing of
+// relative luminance by ≥ 0.10 where the darker side is below 0.80; a flash is two opposing
+// transitions. Each pixel of a 64 px, 30 fps copy tracks its own swings (a fade over several
+// frames still counts once), and a frame is a transition when ≥ 25% of the picture swings the
+// same way on it. More than three flashes in any one second (seven transitions) is red.
+const FLASH = { fps: 30, width: 64, swing: 0.1, dark: 0.8, area: 0.25 };
+function flashes(file, w, h) {
+  const width = FLASH.width,
+    height = Math.max(2, Math.round((h * width) / w / 2) * 2);
+  const raw = decode(file, FLASH.fps, width, height, "rgb24"),
+    px = width * height,
+    n = Math.floor(raw.length / (px * 3));
+  const lin = new Float64Array(256).map((_, v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  // Per pixel: direction of the last swing (0 none yet), and the extreme reached since it.
+  const dir = new Int8Array(px),
+    hi = new Float64Array(px),
+    lo = new Float64Array(px),
+    marks = [];
+  for (let i = 0; i < n; i++) {
+    let up = 0,
+      down = 0;
+    for (let k = 0; k < px; k++) {
+      const o = (i * px + k) * 3,
+        L = 0.2126 * lin[raw[o]] + 0.7152 * lin[raw[o + 1]] + 0.0722 * lin[raw[o + 2]];
+      if (i === 0) {
+        hi[k] = lo[k] = L;
+        continue;
+      }
+      // After a rise only a fall can follow, measured from the highest point since (and back).
+      if (dir[k] <= 0 && L - lo[k] >= FLASH.swing && lo[k] < FLASH.dark) ((dir[k] = 1), (hi[k] = L), up++);
+      else if (dir[k] >= 0 && hi[k] - L >= FLASH.swing && L < FLASH.dark) ((dir[k] = -1), (lo[k] = L), down++);
+      else {
+        if (dir[k] >= 0) hi[k] = Math.max(hi[k], L);
+        if (dir[k] <= 0) lo[k] = Math.min(lo[k], L);
+      }
+    }
+    if (Math.max(up, down) >= FLASH.area * px) marks.push(i / FLASH.fps);
+  }
+  // The densest one-second window.
+  let best = 0,
+    at = null,
+    j = 0;
+  const windows = [];
+  for (let i = 0; i < marks.length; i++) {
+    while (marks[i] - marks[j] >= 1 - 1e-9) j++;
+    const count = i - j + 1;
+    if (count > best) ((best = count), (at = marks[j]));
+    if (count >= 7) {
+      const last = windows.at(-1);
+      if (last && marks[j] <= last.end) ((last.end = round(marks[i], 2)), (last.flashes = Math.max(last.flashes, count / 2)));
+      else windows.push({ start: round(marks[j], 2), end: round(marks[i], 2), flashes: count / 2 });
+    }
+  }
+  return { per_s: best / 2, at: at === null ? null : round(at, 2), windows };
+}
+
 // cuts: authored hard-cut times in seconds, always treated as transitions (not as motion).
 export function measureMotion(file, { cuts = [] } = {}) {
   const { width: W0, height: H0 } = probe(file);
@@ -268,7 +326,8 @@ export function measureMotion(file, { cuts = [] } = {}) {
       b0 = null;
     }
   }
-  const bp = bluePurple(file, W0, H0);
+  const bp = bluePurple(file, W0, H0),
+    fl = flashes(file, W0, H0);
   return {
     method: "12 fps, 320 px gray, subtitle band masked; cuts by difference spike + histogram change (heuristic) plus authored cuts",
     seconds: round(seconds, 2),
@@ -288,10 +347,13 @@ export function measureMotion(file, { cuts = [] } = {}) {
     blank_runs: blankRuns,
     blue_purple_share: round(bp.share),
     blue_purple_spans: bp.spans,
+    flashes_per_s: fl.per_s,
+    flashes_at: fl.at,
+    flash_windows: fl.windows,
   };
 }
 
-// Lights per metric. Only fast_ratio, blank_run_s and blue_purple_share can be red.
+// Lights per metric. Only fast_ratio, blank_run_s, blue_purple_share and flashes_per_s can be red.
 export function gradeMotion(m, { allowStatic = null, allowBluePurple = null } = {}) {
   const rows = [];
   for (const [key, lim] of Object.entries(MOTION_LIMITS)) {

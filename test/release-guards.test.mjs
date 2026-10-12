@@ -123,9 +123,11 @@ test("text check measures a real film: a callout off the right edge from 1 to 2 
   const proj = await buildFilm(c.film, "en", "landscape", path.join(dir, "out", ".build", "probe"));
   const r = await probeText(proj.dir, proj.total);
   assert.equal(r.skipped, undefined, r.skipped);
-  assert.equal(r.runs.length, 1, JSON.stringify(r.runs));
-  assert.equal(r.runs[0].text, "scan with an iPhone: no address, no password");
-  assert.ok(r.runs[0].from >= 0.95 && r.runs[0].from <= 1.05 && r.runs[0].to >= 1.85 && r.runs[0].to < 2, JSON.stringify(r.runs[0]));
+  // the 1 s callout is also too short to read; that note is checked in readability.test.mjs
+  const off = r.runs.filter((x) => x.kind === "frame");
+  assert.equal(off.length, 1, JSON.stringify(r.runs));
+  assert.equal(off[0].text, "scan with an iPhone: no address, no password");
+  assert.ok(off[0].from >= 0.95 && off[0].from <= 1.05 && off[0].to >= 1.85 && off[0].to < 2, JSON.stringify(off[0]));
 });
 
 test("collision check: a cross-fade of two strings in one spot is a run; plates, dimmed text and one paragraph are not", () => {

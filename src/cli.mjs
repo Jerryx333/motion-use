@@ -66,7 +66,8 @@ Usage: motion-use <command> [options]
   voiceover check     Transcribe every narration clip (whisper via uv) and compare it with its script:
                       catches misread acronyms ("AI" as "A-A-I") and polyphones (重试 heard as 重视)
   still [brief]       Render keyframes as PNGs plus a contact sheet (--at 1.5,4 for exact seconds, --shot id,
-                      --beats 1 one frame per beat (4: per bar), --guides tints what platform UI covers in portrait feeds)
+                      --beats 1 one frame per beat (4: per bar), --guides tints what platform UI covers in portrait feeds,
+                      --onion 1.2-2 stacks 8 evenly spaced frames of that range into one PNG to judge spacing)
   render [brief]      Render MP4s for every language and format in the brief
                       (--from 6 --to 10: a quick silent preview of that range of a film)
                       --release: high quality, then platform masters + release-manifest.json in out/release/
@@ -97,6 +98,7 @@ Options for still/render:
   --allow-code       Render authored film code (only projects you wrote or trust)
   --no-normalize     Keep original audio levels (default: two-pass -14 LUFS / -1 dBTP)
   --gate              render: fail on a flagged narration line or text running off the frame
+                      (reading-time and contrast notes stay warnings)
   --no-asr            render: skip the narration transcription check (--asr-model small|medium|large-v3)
   --no-text-check     still/render: skip measuring drawn text against the frame and safe area
   --allow-static "why"       Deliver a film that the motion check reads as a slideshow, recording why
@@ -178,6 +180,7 @@ export async function main(argv) {
         gpu: { type: "boolean" },
         loop: { type: "boolean" },
         beats: { type: "string" },
+        onion: { type: "string" },
         release: { type: "boolean" },
         snapshot: { type: "string" },
         manifest: { type: "string" },
@@ -859,7 +862,7 @@ async function render(o, [briefPath]) {
       // Listed by name only; the report never vouches for what they say.
       const reviewDir = path.join(path.dirname(resolveProject(briefPath)), "reviews");
       verification.independent_reviews = fs.existsSync(reviewDir)
-        ? fs.readdirSync(reviewDir).filter((f) => f.endsWith(".md")).map((f) => path.join(reviewDir, f))
+        ? fs.readdirSync(reviewDir).filter((f) => f.endsWith(".md") && f !== "banned.md").map((f) => path.join(reviewDir, f))
         : [];
       if (textCheck) {
         verification.text_check = textCheck;
@@ -1219,7 +1222,17 @@ async function still(o, [briefPath]) {
   const everyBeats = o.beats === undefined ? null : Number(o.beats);
   if (everyBeats !== null && !(Number.isInteger(everyBeats) && everyBeats >= 1 && everyBeats <= 64))
     return fail("--beats takes a whole number of beats between frames: 1 every beat, 4 every bar", o.json);
+  // --onion a-b[:n]: n evenly spaced frames of that range stacked into one picture.
+  let onion = null;
+  if (o.onion !== undefined) {
+    const m = /^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)(?::(\d+))?$/.exec(o.onion);
+    onion = m && { from: +m[1], to: +m[2], n: m[3] ? +m[3] : 8 };
+    if (!onion || !(onion.to > onion.from) || onion.n < 2 || onion.n > 24)
+      return fail("--onion takes a range of seconds, e.g. --onion 1.2-2 (or 1.2-2:12 for 12 frames, 2–24)", o.json);
+    if (at || shotIds || everyBeats) return fail("--onion replaces --at/--shot/--beats; pass one of them", o.json);
+  }
   const r = await each(briefPath, o, async (proj, id, out) => {
+    if (onion) return onionSkin(proj, id, out, onion, o);
     // --beats n: a frame on every n-th beat of the film's grid, the hits a cut or a UI change should land on.
     let beatTimes = null;
     if (everyBeats) {
@@ -1328,6 +1341,42 @@ async function still(o, [briefPath]) {
       if (!x.ok)
         console.error(`motion-use: still failed for ${x.id}:\n${x.error}`);
   return r.code;
+}
+
+// Onion skin: frames evenly spaced in time, averaged into one PNG, later frames a little stronger
+// so the direction reads. Even ghost spacing is constant speed; spacing that tightens towards the
+// ends is easing; one wide gap is a jump.
+async function onionSkin(proj, id, out, { from, to, n }, o) {
+  const end = Math.min(to, proj.total - 1 / proj.fps);
+  if (from >= end) return { ok: false, id, error: `--onion must lie within the film (0–${proj.total}s)` };
+  const times = Array.from({ length: n }, (_, i) => from + ((end - from) * i) / (n - 1));
+  const dir = path.join(out, "stills", `${id}-onion`);
+  claimDir(dir);
+  const hf = await runHyperframes(
+    ["snapshot", proj.dir, "--at", times.map((t) => t.toFixed(3)).join(","), "--no-end", "--output", dir, o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
+    {},
+  );
+  const pngs = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((f) => f.endsWith(".png")).sort((a, b) => a.localeCompare(b, "en", { numeric: true })).map((f) => path.join(dir, f))
+    : [];
+  if (hf.code !== 0 || pngs.length !== n) return { ok: false, id, error: hf.out.trim().split("\n").slice(-15).join("\n") || `expected ${n} frames, got ${pngs.length}` };
+  const file = path.join(out, "stills", `${id}-onion-${from}-${to}.png`);
+  const blocked = guardOutput(out, file, o.force);
+  if (blocked) return { ok: false, id, error: blocked };
+  const tmp = path.join(dir, ".onion.png");
+  const weights = times.map((_, i) => (1 + i / (n - 1)).toFixed(3)).join(" ");
+  try {
+    execFileSync(
+      "ffmpeg",
+      ["-v", "error", "-y", ...pngs.flatMap((p) => ["-i", p]), "-filter_complex", `${pngs.map((_, i) => `[${i}:v]`).join("")}mix=inputs=${n}:weights='${weights}'`, "-frames:v", "1", tmp],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+  } catch (e) {
+    return { ok: false, id, error: `onion skin not created (${e.code === "ENOENT" ? "ffmpeg not found" : e.stderr?.toString().trim()})` };
+  }
+  commitOutput(out, tmp, file);
+  if (!o.json) console.log(file);
+  return { ok: true, id, onion: file, frames: pngs, at: times.map((t) => +t.toFixed(3)) };
 }
 
 // Decoded pixels, so PNG metadata cannot make two identical frames look different.

@@ -13,6 +13,7 @@ import { BriefError } from "./brief.mjs";
 import { resolveNarration } from "./film-voiceover.mjs";
 import { buildNarrationStem } from "./verify.mjs";
 import { readVoManifest, estimateCues } from "./voiceover.mjs";
+import { readingSeconds, READING_RULE } from "./text-probe.mjs";
 import crypto from "node:crypto";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -573,6 +574,10 @@ function directingChecks(data, shots, error, warn) {
     const units = Math.max(0, ...textOf(s).map(textUnits));
     if (units > 8)
       warn(`${p}.text`, `${units} units on screen; keep shot text to 8 or fewer and leave the sentence to narration`);
+    // The shot window is the most time its planned words can stay up; render measures the real span.
+    const slow = textOf(s).find((x) => Number.isFinite(seconds) && seconds < readingSeconds(x));
+    if (slow)
+      warn(`${p}.text`, `${s.start}–${s.end}s gives "${slow}" ${+seconds.toFixed(2)}s on screen; reading it needs ${readingSeconds(slow)}s (${READING_RULE}): fewer words or a longer shot`);
     const led = units >= 7 || /^(title|text|headline|quote|标题|文字|大字|金句|字卡)/i.test(String(s.action ?? "").trim());
     if (led) textLed++;
     if (led && (i === 0 || (i === valid.length - 1 && valid.length > 1)))

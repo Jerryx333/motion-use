@@ -105,10 +105,13 @@ For a new character interpretation or style direction, show three options first,
 | `blue_purple_share` | share of frames where ≥ 30% of pixels are blue-purple | ≥ 0.12 | ≥ 0.30 |
 | `worst_window_fast_ratio` | the slackest 30 s window (half the film when shorter than 60 s) | ≤ 0.02 | – |
 | `longest_still_s`, `max_event_gap_s` | review hints only | ≥ 6 s, ≥ 15 s | – |
+| `flashes_per_s` | general flashes in the densest one-second window (WCAG 2.3.1): a flash is two opposing swings of relative luminance by ≥ 0.10, darker side below 0.80, over ≥ 25% of the frame; measured per pixel at 30 fps, so a fade over a few frames is one swing | 3 | > 3 |
 
 The lines come from the reference author's judgement of 13 films ≥ 45 s (approved films ≥ 0.068, rejected ≤ 0.021) and 88 films for blue-purple. Below 20 s a red `fast_ratio` is downgraded to yellow. Measured here: the OCS film 0.129, the three.js promo 0.096, the yarn film 0.236, the hand-written starter 0.090 (landscape) and 0.117 (portrait), the helper-based starter 0.076 and 0.089, the data-story example 0.054 and 0.072; a calm 138 s reference video 0.026. A pale, sparse composition can pulse correctly and still score low: a fast move must change much of the frame. Fix the composition (bigger, filled subject), not the threshold.
 
 Overrides are recorded in the report: `--allow-static "why"` (or `look.allowStatic`) and `--allow-blue-purple "why"` (or `look.allowBluePurple`; the reference author's own Starry Night speedrun measures 0.41). Cuts are found by a frame-difference spike that also changes the luminance histogram; authored `cut: true` shots are always treated as cuts. Without camera-motion estimation, a very fast whip between similar frames can be counted as a cut.
+
+A red flash light has no override: a strobe can trigger seizures in photosensitive viewers. Slow it to three flashes a second or fewer, keep the flashing area under a quarter of the frame, or shrink the brightness swing. Saturated-red flashes (the other half of WCAG 2.3.1) are not measured.
 
 The lights cannot see a page frame, a collage of styles, a strong start with a slack middle the window misses, or an unclear story. Stillness metrics are hints: a pulse film legitimately holds still for long stretches.
 
@@ -119,6 +122,23 @@ Before delivery, someone who did not make the film watches only the MP4 (and its
 - each issue with a timecode, what the viewer sees, and the likely cause;
 - the six failure modes, checked one by one;
 - regressions from the last round listed separately from new findings.
+
+### Translate the note into numbers
+
+Review notes arrive as feelings. Turn each into a change you can measure before touching code, and write the number into the round's notes so the next round can check it.
+
+| the note | what to change |
+|---|---|
+| "make it pop" | one scale accent on the hit: 1 → 1.08 → 1 over about 6 frames, peaking on the beat or the spoken word; not on every element |
+| "premium", "expensive" | entrances on ease-out quint (`easings.quintOut`, cubic-bezier(0.22, 1, 0.36, 1) on [easings.net](https://easings.net/#easeOutQuint) by Andrey Sitnik), springs at `springZeta(t, 0.8)`, no overshoot on text, longer holds than feels necessary |
+| "playful" | springs at zeta 0.5, small rotations (±3°), stepped secondaries (`M.step`) |
+| "it drags" | shorten every hold by one beat (60 / BPM s), cut the longest hold first; keep the ≥ 0.5 s after a number lands |
+| "too busy" | one hero move at a time; secondaries start 100–200 ms after it and travel 50–70% as far; ambient motion under 5% of the frame's size |
+| "hard to read" | check `text_check` reading and contrast notes first; fewer words before longer holds |
+| "looks like AI" | name the defaults the render used (centred title card, blue-purple glow, every element fading in, uniform drift, symmetric layout), add them to the banned list, re-render without them |
+| "feels robotic" | `still --onion` across the move: evenly spaced ghosts are linear; ease it so the ghosts bunch towards the landing |
+
+Keep a living banned list in `reviews/banned.md`: each line a default the first render used anyway (the centred end card, the fade-in on every element, the 0.5 s cross-dissolve) and the round it was banned. Read it before each new round and each new film in the same project; a fix that reintroduces a banned default is a regression.
 
 If the same class of issue survives three rounds and two fixes, go back to the assets or the renderer instead of polishing. Once the user picks a version, freeze code, timeline, mix and subtitles together.
 

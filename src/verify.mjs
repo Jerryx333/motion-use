@@ -461,6 +461,7 @@ export function verifyVideo(
     const explain = {
       fast_ratio: `almost no fast movement inside shots (fast_ratio ${measured.fast_ratio}): a slideshow, not a film. Move on events — hold, then a 0.17–0.3 s push, pan or slam, then hold — or pass --allow-static "reason"`,
       blank_run_s: `mid-film frames with no edges at all (${measured.blank_runs.map((r) => `${r.start}–${r.end}s`).join(", ")}): keep the subject in frame`,
+      flashes_per_s: `${measured.flashes_per_s} flashes in one second (${measured.flash_windows.slice(0, 4).map((r) => `${r.start}–${r.end}s`).join(", ") || `from ${measured.flashes_at}s`}): over the WCAG 2.3.1 limit of three, a seizure risk for photosensitive viewers. Slow the strobe, shrink the flashing area below a quarter of the frame, or lower its brightness swing`,
       blue_purple_share: `blue-purple frames cover ${Math.round(measured.blue_purple_share * 100)}% of the film (${measured.blue_purple_spans.slice(0, 4).map((r) => `${r.start}–${r.end}s`).join(", ")}): the generic AI look. Change the palette, or record why the subject needs it with look.allowBluePurple / --allow-blue-purple "reason"`,
     };
     for (const r of red)
@@ -513,7 +514,7 @@ export function verifyVideo(
     limitations: [
       "Measurements and sampled frames do not judge design quality, narrative coherence, subtitle readability or listening quality.",
       "Black and still intervals are review signals, not automatic aesthetic failures.",
-      "Motion lights detect slideshow pacing, empty frames and blue-purple palettes; they cannot see page frames, collage styles or an unclear story.",
+      "Motion lights detect slideshow pacing, empty frames, blue-purple palettes and full-frame flashing; they cannot see page frames, collage styles or an unclear story.",
     ],
   };
   const reportFile = path.join(outDir, "report.json");

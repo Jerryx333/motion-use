@@ -198,7 +198,45 @@
     const probe = document.createElement("canvas");
     probe.width = canvas.width;
     probe.height = canvas.height;
-    const pc = probe.getContext("2d");
+    const pc = probe.getContext("2d", { willReadFrequently: true });
+    // Contrast: the picture under a string's box just before it is drawn, shrunk to 48×12, and its
+    // median-luminance pixel against the fill colour (WCAG relative luminance and ratio).
+    const tiny = document.createElement("canvas");
+    tiny.width = 48;
+    tiny.height = 12;
+    const tc = tiny.getContext("2d", { willReadFrequently: true });
+    const rgbOf = (style) => {
+      if (typeof style !== "string") return null;
+      const hex = /^#([0-9a-f]{6})$/i.exec(style);
+      if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
+      const m = /^rgba?\(([^)]+)\)$/.exec(style);
+      return m ? m[1].split(",").slice(0, 3).map(Number) : null;
+    };
+    const lin = (v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    const hexOf = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+    const contrastOf = (ctx, box, style, alpha) => {
+      const fill = rgbOf(style);
+      const x0 = Math.max(0, Math.floor(box.x0)),
+        y0 = Math.max(0, Math.floor(box.y0)),
+        x1 = Math.min(probe.width, Math.ceil(box.x1)),
+        y1 = Math.min(probe.height, Math.ceil(box.y1));
+      if (!fill || x1 - x0 < 1 || y1 - y0 < 1) return null;
+      tc.clearRect(0, 0, 48, 12);
+      tc.drawImage(probe, x0, y0, x1 - x0, y1 - y0, 0, 0, 48, 12);
+      const d = tc.getImageData(0, 0, 48, 12).data,
+        px = [];
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] >= 128) px.push([d[i], d[i + 1], d[i + 2]]);
+      if (!px.length) return null;
+      px.sort((a, b) => lum(a) - lum(b));
+      const back = px[px.length >> 1],
+        // a translucent fill blends with what is under it (the canvas blends in sRGB)
+        text = fill.map((v, i) => alpha * v + (1 - alpha) * back[i]);
+      const [hi, lo] = [lum(text), lum(back)].sort((a, b) => b - a);
+      const size = (parseFloat(/([\d.]+)px/.exec(ctx.font)?.[1]) || 0) * Math.sqrt(Math.abs(box.det)),
+        bold = /\bbold/.test(ctx.font) || +(/\b([1-9]00)\b/.exec(ctx.font)?.[1] ?? 400) >= 700;
+      return { contrast: +((hi + 0.05) / (lo + 0.05)).toFixed(2), large: size >= 24 || (bold && size >= 18.66), color: hexOf(fill), backdrop: hexOf(back), size: Math.round(size) };
+    };
     let boxes = [],
       plates = [],
       order = 0,
@@ -234,12 +272,12 @@
             }
             const top = y - m.actualBoundingBoxAscent,
               bottom = y + m.actualBoundingBoxDescent;
-            boxes.push({
-              text: s,
-              ...toBox(this.getTransform(), [[l, top], [r, top], [l, bottom], [r, bottom]]),
-              alpha: +(this.globalAlpha * styleAlpha(this[styleKey])).toFixed(3),
-              order: order++,
-            });
+            const T = this.getTransform(),
+              box = toBox(T, [[l, top], [r, top], [l, bottom], [r, bottom]]),
+              alpha = +(this.globalAlpha * styleAlpha(this[styleKey])).toFixed(3);
+            // Filled text only: an outline is usually there to lift the text off its background.
+            const seen = styleKey === "fillStyle" && alpha >= 0.5 ? contrastOf(this, { ...box, det: T.a * T.d - T.b * T.c }, this[styleKey], alpha) : null;
+            boxes.push({ text: s, ...box, alpha, order: order++, ...(seen ?? {}) });
           }
         } catch {}
         return draw.apply(this, arguments);

@@ -814,6 +814,24 @@ window.__filmKit = function (view, film) {
       const x = Math.max(0, t - start);
       return t < start ? 0 : 1 - Math.exp(-d * x) * Math.cos(2 * Math.PI * f * x);
     },
+    // Spring by damping ratio: progress 0 → 1, `t` seconds after the start, zero starting velocity.
+    // Closed form, so any frame renders on its own. zeta 1 never overshoots; 0.7–0.85 lands with a
+    // small settle (premium), 0.4–0.6 bounces (playful), under 0.3 wobbles (cartoon). hz is the
+    // undamped frequency; the bounce itself runs at hz·√(1 − zeta²). Named springZeta because the
+    // runtime's spring(time, start, speed, damping) keeps its signature.
+    springZeta: (t, zeta = 0.7, hz = 2) => {
+      if (!(t > 0)) return 0;
+      const w = 2 * Math.PI * hz;
+      if (zeta === 1) return 1 - Math.exp(-w * t) * (1 + w * t);
+      if (zeta > 1) {
+        const r = Math.sqrt(zeta * zeta - 1),
+          s1 = -w * (zeta - r),
+          s2 = -w * (zeta + r);
+        return 1 + (s2 * Math.exp(s1 * t) - s1 * Math.exp(s2 * t)) / (s1 - s2);
+      }
+      const wd = w * Math.sqrt(1 - zeta * zeta);
+      return 1 - Math.exp(-zeta * w * t) * (Math.cos(wd * t) + ((zeta * w) / wd) * Math.sin(wd * t));
+    },
     // A value that changes target many times and stays a pure function of t: one closed-form spring
     // step (zero starting velocity) per change, summed. keys = [[at, value], …]; the first value holds
     // before the second key. Values are numbers or same-length arrays. Two edges of one shape on

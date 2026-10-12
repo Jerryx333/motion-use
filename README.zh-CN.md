@@ -49,7 +49,7 @@ motion-use beats 歌曲.wav                    # 卡歌曲节拍：速度、第�
 
 每次渲染还会输出封面、从**交付的 MP4** 抽帧得到的联系表，以及一份技术报告：能否完整解码，实测时长、帧率、尺寸，有无音频，响度和峰值，每个镜头的 RMS，暗场和静止区间，以及运动指标。编码成功不等于审美通过：在人或 agent 看过之前，`visual_review` 一直是 pending。Canvas 上画的文字不在 DOM 布局检查的覆盖范围内。音频按 -14 LUFS / -1 dBTP 的工作目标做两遍归一化；`--no-normalize` 保留原始电平。
 
-**眼睛看不出的问题，交给检查。** 渲染时会用 whisper 把每段旁白转成文字，和脚本逐句对照，标出读错的地方，比如把“AI”读成“A-A-I”、把“重试”读成“重视”（单独跑用 `voiceover check`）。它还会测量画面里每一段文字，超出画面或竖版安全区的、两段字叠在一起的（比如前一句还没淡出、下一句已经出现在同一位置）都会报出来，带上时间。每次渲染都会把当时的输入存成快照，配音改了以后也能用 `render --snapshot <id>` 原样重渲染。`render --release` 生成发各平台用的文件：x264 veryslow CRF 16 母版、需要时给 X 的 45 MB 以内版本、封面，再写一份带哈希的 `release-manifest.json`；上传前用 `verify --manifest` 确认手里的就是当前母版。
+**眼睛看不出的问题，交给检查。** 渲染时会用 whisper 把每段旁白转成文字，和脚本逐句对照，标出读错的地方，比如把“AI”读成“A-A-I”、把“重试”读成“重视”（单独跑用 `voiceover check`）。它还会测量画面里每一段文字，超出画面或竖版安全区的、两段字叠在一起的（比如前一句还没淡出、下一句已经出现在同一位置）都会报出来，带上时间。字在屏幕上停留的时间不够读完（每个英文词 0.3 秒、每个汉字 0.15 秒，再加 0.5 秒），或者和背景的对比度低于 WCAG 标准，也会提醒；一秒内闪烁超过三次（WCAG 2.3.1）的片子过不了运动检查。每次渲染都会把当时的输入存成快照，配音改了以后也能用 `render --snapshot <id>` 原样重渲染。`render --release` 生成发各平台用的文件：x264 veryslow CRF 16 母版、需要时给 X 的 45 MB 以内版本、封面，再写一份带哈希的 `release-manifest.json`；上传前用 `verify --manifest` 确认手里的就是当前母版。
 
 完整的绘制和音频约定见 [references/film.md](references/film.md)。已有的 MP4 可以用 `motion-use verify file.mp4 --json` 生成检查报告，不用重新渲染。
 
@@ -113,7 +113,7 @@ motion-use 是一个 Node.js 程序，不是单个原生二进制：渲染要驱
 | `init [dir]` | 默认创建导演模式项目；`--mode template` 选择模板 brief：`--style`、`--name`、`--lang zh,en`、`--format landscape,vertical` |
 | `validate [brief]` | 检查 brief、文件、旁白长度和字形覆盖；打印时间线 |
 | `voiceover [brief]` | 按场景的 `narration` 生成语音：`--engine azure`（有授权）或 `edge`（预览）；`voiceover check` 把旁白转成文字，标出读错的地方 |
-| `still [brief]` | 关键帧和联系表；`--at 1.5,4` 指定秒数，`--beats 4` 每小节一帧；绘制代码在帧之间留了状态时会警告 |
+| `still [brief]` | 关键帧和联系表；`--at 1.5,4` 指定秒数，`--beats 4` 每小节一帧；`--onion 1.2-2` 把一段动作的若干帧叠成一张图，看间距判断缓动；绘制代码在帧之间留了状态时会警告 |
 | `render [brief]` | 每种语言 × 画幅一个 MP4，外加封面 PNG；`--quality draft\|standard\|high`、`--target github` / `--max-size 9MB`；`--release` 出平台母版和清单，`--snapshot <id>` 原样重渲染之前的版本，`--gate` 旁白被标出、文字出画或叠字时失败 |
 | `verify <mp4>` | 解码并测量交付的视频：检查帧、音频、运动指标；`--gate` 红灯时失败，`--loop` 检查循环接缝，`--manifest` 确认文件就是当前发布母版 |
 | `breakdown <video>` | 拆解参考片：切点、节拍网格、联系表、转场条、运动热力图、色板、运动指标 |

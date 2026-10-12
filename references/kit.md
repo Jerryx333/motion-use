@@ -37,7 +37,7 @@ Every time-based helper is `(c, t, …positional, options)`; points are `[x, y]`
 | `spotlight(c, t, [x,y,w,h], {at, until})`, `cursor(c, t, [[t,x,y], …], {clicks})` | dim all but a region; a pointer that moves and clicks |
 | `grade(c, "mono"\|"tint"\|"duotone", …)`, `grain(c, t)`, `vignette(c)` | whole-frame looks, drawn last |
 | `follow(t, [[at, value], …], {f, d})` | a number or point that springs to each new target in turn, a pure function of `t` (UI morphs) |
-| `tween(t, at, dur, ease)`, `springHz`, `settle`, `lagged`, `step`, `easings.*` | timing building blocks |
+| `tween(t, at, dur, ease)`, `springZeta(t, zeta, hz)`, `springHz`, `settle`, `lagged`, `step`, `easings.*` | timing building blocks; `springZeta` takes seconds since the move and a damping ratio (0.8 premium, 0.5 playful, 1 no bounce) |
 | `rough`, `drawOn`, `paragraph`, `wrap`, `ring`, `lerp2`, `add`, `rng`, `noise` | drawing building blocks |
 
 ```json
@@ -59,6 +59,7 @@ motion-use validate .                                  # plan warnings, glyphs, 
 motion-use still . --allow-code --shot peak            # three frames of one shot
 motion-use still . --allow-code --format vertical --guides   # tint what platform UI covers
 motion-use still . --allow-code --beats 4              # one frame per bar of the beat grid
+motion-use still . --allow-code --onion 4.4-5.2        # 8 frames of a move in one PNG: is the spacing eased?
 motion-use beats audio/song.wav                        # imported song: tempo, downbeat, drop → music line
 motion-use render . --allow-code --from 3 --to 7       # silent draft of a range, no delivery checks
 motion-use render . --allow-code --quality draft --json  # compact summary; full report on disk

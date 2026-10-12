@@ -195,3 +195,21 @@ test("a subtitle too long for three lines shrinks to fit three, not one", () => 
   assert.equal(rows.length, 3, JSON.stringify(rows.map((r) => r[1])));
   assert.equal(rows.map((r) => r[1]).join(" "), text);
 });
+
+test("springZeta: closed-form progress by damping ratio; zeta 1 never overshoots, 0.5 bounces", () => {
+  const M = kit();
+  const peak = (zeta, hz = 2) => Math.max(...Array.from({ length: 4000 }, (_, i) => M.springZeta(i / 1000, zeta, hz)));
+  assert.equal(M.springZeta(0, 0.5), 0);
+  assert.equal(M.springZeta(-1, 0.5), 0);
+  assert.ok(peak(1) <= 1 + 1e-12, `zeta 1 peaks at ${peak(1)}`);
+  assert.ok(peak(1.6) <= 1 + 1e-12, "overdamped never overshoots");
+  // overshoot of a second-order step: e^(−πζ/√(1−ζ²)) → 16.3% at 0.5, 4.6% at 0.7, 0.6% at 0.85
+  assert.ok(Math.abs(peak(0.5) - 1.163) < 0.002, `zeta 0.5 peaks at ${peak(0.5)}`);
+  assert.ok(peak(0.85) < 1.01, "the premium band barely settles");
+  for (const z of [0.2, 0.5, 0.7, 1, 2]) assert.ok(Math.abs(M.springZeta(6, z, 2) - 1) < 1e-3, `zeta ${z} converges`);
+  // a pure function of t: the same frame twice is the same value, whatever came before
+  assert.equal(M.springZeta(0.37, 0.6, 3), M.springZeta(0.37, 0.6, 3));
+  // continuous across the critical point
+  assert.ok(Math.abs(M.springZeta(0.3, 1) - M.springZeta(0.3, 0.999999)) < 1e-4);
+  assert.ok(Math.abs(M.springZeta(0.3, 1) - M.springZeta(0.3, 1.000001)) < 1e-4);
+});

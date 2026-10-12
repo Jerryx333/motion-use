@@ -4,6 +4,8 @@
 // reviewer looking at full-size frames saw it. This measures every fillText/strokeText instead.
 // The same probe finds two strings drawn over each other: the same promo cross-faded
 // "任何 App，不需要 API" into "一步写入 278 字" in one spot for 0.08 s and shipped to nine platforms.
+// Because the probe knows when each string is visible and what is under it, it also reports lines
+// gone before they can be read and text too close to its background (WCAG contrast); both warn only.
 import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
@@ -154,6 +156,124 @@ export function transitionTimes(samples, fps, { alpha = 0.25, cap = 4000 } = {})
   return out;
 }
 
+// Reading time. 0.3 s per Latin word is about 200 words a minute, the pace subtitle guides
+// allow for adults; the 0.5 s is the eye finding the line. Subtitle guides allow about 9 Chinese
+// characters a second; motion text competes with the picture, so 0.15 s per CJK character (~7/s).
+const CJK = /[⺀-鿿豈-﫿가-힯]/g;
+export const READING_RULE = "0.3 s per word + 0.15 s per CJK character + 0.5 s";
+export function readingSeconds(text) {
+  const s = String(text),
+    cjk = (s.match(CJK) ?? []).length,
+    words = (s.replace(CJK, " ").match(/[\p{L}\p{N}][\p{L}\p{N}.%°'’-]*/gu) ?? []).length;
+  return +(0.5 + 0.3 * words + 0.15 * cjk).toFixed(2);
+}
+
+// One line of words drawn piece by piece (M.words draws each word on its own): boxes on the same
+// row, close together, read as one line, left to right.
+function lines(boxes) {
+  const rows = [];
+  for (const b of [...boxes].sort((a, b) => a.x0 - b.x0)) {
+    const h = b.y1 - b.y0;
+    const row = rows.find((r) => {
+      const last = r.at(-1),
+        lh = Math.min(h, last.y1 - last.y0),
+        overlap = Math.min(b.y1, last.y1) - Math.max(b.y0, last.y0);
+      return overlap >= 0.5 * lh && b.x0 - last.x1 <= 1.2 * lh;
+    });
+    row ? row.push(b) : rows.push([b]);
+  }
+  const cjk = (ch) => /[⺀-鿿豈-﫿가-힯　-〿＀-￯]/.test(ch ?? "");
+  // A word space between pieces that sit apart; letters written one by one stay one word.
+  return rows.map((r) =>
+    r.reduce((s, b, i) => {
+      const gap = i ? b.x0 - r[i - 1].x1 : 0;
+      return i && gap > 0.15 * (b.y1 - b.y0) && !cjk(s.at(-1)) && !cjk(b.text[0]) ? `${s} ${b.text}` : s + b.text;
+    }, ""),
+  );
+}
+
+/**
+ * Lines of text visible for less time than it takes to read them (READING_RULE). A line that grows
+ * (a typewriter, words arriving one by one, a counter rolling: digits are ignored for identity)
+ * counts from the moment its first part appeared. Strings with no letters are not checked.
+ * samples: [{ t, boxes }] sorted by t.
+ */
+export function readingRuns(samples, { width = Infinity, height = Infinity, alpha = 0.25, gap = 0.15 } = {}) {
+  const open = new Map(),
+    runs = [];
+  const close = (key, at) => {
+    const r = open.get(key);
+    open.delete(key);
+    if (r.grown) return;
+    const seconds = at - r.from,
+      required = readingSeconds(r.text);
+    if (seconds < required - 0.05)
+      runs.push({ kind: "reading", text: r.text, from: +r.from.toFixed(2), to: +at.toFixed(2), seconds: +seconds.toFixed(2), required });
+  };
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const vis = s.boxes.filter((b) => (b.alpha ?? 1) >= alpha && b.x1 > 0 && b.x0 < width && b.y1 > 0 && b.y0 < height && area(b) > 0);
+    const now = new Map();
+    for (const text of lines(vis)) if (/\p{L}/u.test(text)) now.set(text.replace(/\d/g, "0").replace(/\s+/g, ""), text);
+    // Gone for longer than `gap`: the line ended at the first sample it was missing from.
+    for (const [key, r] of [...open]) if (!now.has(key) && s.t - r.last > gap) close(key, r.next ?? s.t);
+    for (const [key, text] of now) {
+      let r = open.get(key);
+      if (!r) {
+        r = { from: s.t, text };
+        for (const [k, o] of open)
+          if (!now.has(k) && s.t - o.last <= gap && key.includes(k)) ((r.from = Math.min(r.from, o.from)), (o.grown = true));
+        for (const [k, o] of [...open]) if (o.grown) open.delete(k);
+        open.set(key, r);
+      }
+      r.text = text;
+      r.last = s.t;
+      r.next = samples[i + 1]?.t;
+    }
+  }
+  // A line still up when the film ends sits on the end frame (players hold it or loop): not judged.
+  for (const [key, r] of [...open]) r.next === undefined ? open.delete(key) : close(key, r.next);
+  return runs.sort((a, b) => a.from - b.from);
+}
+
+/**
+ * Text against what is drawn under it, for at least `minRun` seconds while fully shown: WCAG
+ * contrast under 4.5:1, or 3:1 for large text (≥ 24 px, or ≥ 18.66 px at weight 700+, in frame
+ * pixels). The probe gives each filled string its colour and the median pixel under its box.
+ */
+export function contrastRuns(samples, { step = 0.1, minRun = 0.3, alpha = 0.9 } = {}) {
+  const open = new Map(),
+    runs = [];
+  const close = (key) => {
+    const r = open.get(key);
+    open.delete(key);
+    if (r.to - r.from + step >= minRun - 1e-6) {
+      const { last, ...rest } = r;
+      runs.push({ ...rest, from: +r.from.toFixed(2), to: +r.to.toFixed(2) });
+    }
+  };
+  for (const s of samples) {
+    const seen = new Set();
+    for (const b of s.boxes) {
+      if (b.contrast === undefined || (b.alpha ?? 1) < alpha) continue;
+      const need = b.large ? 3 : 4.5;
+      if (b.contrast >= need || seen.has(b.text)) continue;
+      seen.add(b.text);
+      const r = open.get(b.text);
+      if (r && s.t - r.to <= step * 1.5) {
+        r.to = s.t;
+        if (b.contrast < r.contrast) Object.assign(r, { contrast: b.contrast, color: b.color, backdrop: b.backdrop });
+      } else {
+        if (r) close(b.text);
+        open.set(b.text, { kind: "contrast", text: b.text, from: s.t, to: s.t, contrast: b.contrast, need, large: b.large, color: b.color, backdrop: b.backdrop });
+      }
+    }
+    for (const key of [...open.keys()]) if (!seen.has(key)) close(key);
+  }
+  for (const key of [...open.keys()]) close(key);
+  return runs.sort((a, b) => a.from - b.from);
+}
+
 function serve(dir) {
   const root = path.resolve(dir);
   const server = http.createServer((req, res) => {
@@ -213,7 +333,13 @@ export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3 } 
     return {
       samples: dense.length,
       step,
-      runs: [...runs, ...collisionRuns(dense, { minDur: Math.max(0.05, 2 / (meta.fps || 30)) })].sort((a, b) => a.from - b.from),
+      runs: [
+        ...runs,
+        ...collisionRuns(dense, { minDur: Math.max(0.05, 2 / (meta.fps || 30)) }),
+        // the frame-accurate samples time when a line appears and goes
+        ...readingRuns(dense, { width: meta.width, height: meta.height }),
+        ...contrastRuns(all, { step, minRun }),
+      ].sort((a, b) => a.from - b.from),
       page_errors: errors.slice(0, 5),
     };
   } catch (e) {
@@ -229,9 +355,22 @@ export function describeText(check) {
   if (!check) return [];
   if (check.skipped) return [check.skipped];
   const q = (s) => `"${s.length > 60 ? s.slice(0, 57) + "…" : s}"`;
-  return check.runs.map((r) =>
+  const line = (r) =>
     r.kind === "collision"
       ? `text drawn over other text ${r.from}–${r.to}s (${Math.round(r.overlap * 100)}% of the smaller box): ${q(r.text)} × ${q(r.other)}`
-      : `text ${r.kind === "frame" ? "runs off the frame" : "leaves the portrait safe area"} (${r.sides.join("/")}, ${r.overflow_px}px) ${r.from}–${r.to}s: ${q(r.text)}`,
-  );
+      : r.kind === "reading"
+        ? `text on screen ${r.from}–${r.to}s for ${r.seconds}s, needs ${r.required}s to read (${READING_RULE}): ${q(r.text)}`
+        : r.kind === "contrast"
+          ? `low contrast ${r.contrast}:1 ${r.from}–${r.to}s, ${r.color} on ${r.backdrop} (WCAG ${r.need}:1 for ${r.large ? "large" : "normal"} text; large = 24 px+, or 18.66 px+ bold): ${q(r.text)}`
+          : `text ${r.kind === "frame" ? "runs off the frame" : "leaves the portrait safe area"} (${r.sides.join("/")}, ${r.overflow_px}px) ${r.from}–${r.to}s: ${q(r.text)}`;
+  // Reading and contrast notes can be many on a busy film; the report keeps every one.
+  const out = [],
+    count = {};
+  for (const r of check.runs) {
+    count[r.kind] = (count[r.kind] ?? 0) + 1;
+    if (!["reading", "contrast"].includes(r.kind) || count[r.kind] <= 8) out.push(line(r));
+  }
+  for (const k of ["reading", "contrast"])
+    if (count[k] > 8) out.push(`${count[k] - 8} more ${k} notes in report.json text_check`);
+  return out;
 }

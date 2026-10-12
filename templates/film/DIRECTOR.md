@@ -28,7 +28,7 @@ Slideshow pacing · copied demo · no concrete object · dead background or empt
 - Did `render` report any `narration_check` line or `text_check` run? Listen to each flagged clip; look at each reported time.
 - Is every file you hand over listed by `verify --manifest out/release/release-manifest.json`?
 
-Run `motion-use still . --allow-code`, examine the frames, then render. Read `out/review/<id>/report.json` (including the motion lights) and watch the MP4. Technical pass is not visual approval. Have someone who did not make the film write notes into `reviews/`. Keep feedback and remaining issues here so another session can continue.
+Run `motion-use still . --allow-code`, examine the frames, then render. Read `out/review/<id>/report.json` (including the motion lights) and watch the MP4. Technical pass is not visual approval. Have someone who did not make the film write notes into `reviews/`. Keep `reviews/banned.md` as a living list of defaults the first render used anyway (centred end card, fade-in on every element, uniform drift); read it before each round. Keep feedback and remaining issues here so another session can continue.
 
 ## Lessons
 
