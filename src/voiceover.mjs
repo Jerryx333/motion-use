@@ -49,9 +49,21 @@ async function azure(text, voice, rate, out) {
   fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
 }
 
+// Since 2026-10-12 the legacy Edge read-aloud host answers 403 (rany2/edge-tts#490). Run the
+// installed edge-tts through scripts/edge-tts.py, which tries the new host first, with the
+// Python interpreter from the edge-tts launcher's shebang; fall back to the plain CLI.
+function edgeCommand(args) {
+  const script = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "scripts", "edge-tts.py");
+  const which = spawnSync("which", ["edge-tts"], { encoding: "utf8" });
+  const bin = which.status === 0 ? which.stdout.trim() : "";
+  const py = bin ? (fs.readFileSync(bin, "utf8").split("\n")[0].match(/^#!\s*(\S+python\S*)\s*$/) || [])[1] : null;
+  return py && fs.existsSync(script) ? [py, [script, ...args]] : ["edge-tts", args];
+}
+
 function edge(text, voice, rate, out) {
   const srt = `${out}.srt`;
-  const r = spawnSync("edge-tts", ["--voice", voice, `--rate=${rate}`, "--text", text, "--write-media", out, "--write-subtitles", srt], { encoding: "utf8" });
+  const [cmd, args] = edgeCommand(["--voice", voice, `--rate=${rate}`, "--text", text, "--write-media", out, "--write-subtitles", srt]);
+  const r = spawnSync(cmd, args, { encoding: "utf8" });
   if (r.error?.code === "ENOENT") throw new Error("edge-tts is not installed (pip install edge-tts, or uv tool install edge-tts)");
   if (r.status !== 0) throw new Error(`edge-tts failed: ${(r.stderr || r.stdout).trim().split("\n").pop()}`);
   // Sentence cues timed by the voice service; subtitles use them instead of an estimate.
