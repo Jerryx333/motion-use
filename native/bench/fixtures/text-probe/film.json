@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "kind": "film",
+  "name": "text-probe",
+  "duration": 2,
+  "fps": 30,
+  "languages": ["en"],
+  "formats": ["landscape"],
+  "composition": "composition/draw.js",
+  "look": { "style": "Calibration sheet", "palette": "paper", "character": "none" },
+  "music": "none",
+  "voiceover": false,
+  "copy": { "en": { "a": "Hamburg 13.93 永" } },
+  "shots": [{ "id": "a", "start": 0, "end": 2, "camera": "hold", "purpose": "Calibrate text", "action": "Text at several weights, sizes and baselines", "holdReason": "calibration" }]
+}

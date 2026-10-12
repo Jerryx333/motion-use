@@ -13,3 +13,5 @@ examples/*/audio/*.wav
 # `motion-use reference` output: third-party prompts and videos, for study only
 /references/*/
 examples/*/references/*/
+# native renderer build output
+native/target/

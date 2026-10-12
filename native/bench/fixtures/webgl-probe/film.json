@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "kind": "film",
+  "name": "webgl-probe",
+  "duration": 2,
+  "fps": 30,
+  "languages": ["en"],
+  "formats": ["landscape"],
+  "composition": "composition/draw.js",
+  "look": { "style": "Probe", "palette": "paper", "character": "none" },
+  "music": "none",
+  "voiceover": false,
+  "copy": { "en": { "a": "webgl" } },
+  "shots": [{ "id": "a", "start": 0, "end": 2, "camera": "hold", "purpose": "Probe WebGL", "action": "A WebGL canvas is requested", "holdReason": "probe" }]
+}

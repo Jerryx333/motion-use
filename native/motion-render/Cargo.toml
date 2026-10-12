@@ -1,0 +1,23 @@
+[package]
+name = "motion-render"
+version = "0.1.0"
+edition = "2021"
+description = "Native renderer for motion-use films: drawFrame on a Canvas 2D over Skia, JS in V8"
+license = "MIT"
+
+[dependencies]
+v8 = "=152.2.0"
+skia-safe = { version = "=0.153.3", features = ["textlayout", "svg", "webp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+csscolorparser = "0.7"
+png = "0.17"
+sha2 = "0.10"
+woff2-patched = "0.4"
+unicode-script = "0.5"
+
+[features]
+default = ["embed-fonts"]
+# Film Sans / Film Mono (motion-use assets/fonts) inside the binary, for a single-file release
+embed-fonts = []
