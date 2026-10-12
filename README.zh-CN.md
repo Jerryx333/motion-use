@@ -51,6 +51,8 @@ motion-use beats 歌曲.wav                    # 卡歌曲节拍：速度、第�
 
 **眼睛看不出的问题，交给检查。** 渲染时会用 whisper 把每段旁白转成文字，和脚本逐句对照，标出读错的地方，比如把“AI”读成“A-A-I”、把“重试”读成“重视”（单独跑用 `voiceover check`）。它还会测量画面里每一段文字，超出画面或竖版安全区的、两段字叠在一起的（比如前一句还没淡出、下一句已经出现在同一位置）都会报出来，带上时间。字在屏幕上停留的时间不够读完（每个英文词 0.3 秒、每个汉字 0.15 秒，再加 0.5 秒），或者和背景的对比度低于 WCAG 标准，也会提醒；一秒内闪烁超过三次（WCAG 2.3.1）的片子过不了运动检查。每次渲染都会把当时的输入存成快照，配音改了以后也能用 `render --snapshot <id>` 原样重渲染。`render --release` 生成发各平台用的文件：x264 veryslow CRF 16 母版、需要时给 X 的 45 MB 以内版本、封面，再写一份带哈希的 `release-manifest.json`；上传前用 `verify --manifest` 确认手里的就是当前母版。
 
+**不绑定某一个渲染器。** `files` 可以把任意本地文件（glb、vrm、hdr、wasm……）交给浏览器里的库，页面里用 `window.filmFiles.<名字>` 取。`"engine": {"type": "command", "command": ["blender", "-b", "-P", "scene.py", "--"]}` 让外部引擎来画画面：motion-use 写一份任务文件，命令按帧输出 PNG，后面的流程都不变——配乐和旁白、叠在上面的透明 composition 层（3D 画面上的字幕，照样过文字检查）、交付检查、快照和发布母版。`--workers 4` 把帧分给四个进程同时渲染。任务文件的约定见 [references/film.md](references/film.md#external-engines)。
+
 完整的绘制和音频约定见 [references/film.md](references/film.md)。已有的 MP4 可以用 `motion-use verify file.mp4 --json` 生成检查报告，不用重新渲染。
 
 ## 场景模板

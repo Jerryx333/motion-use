@@ -25,6 +25,12 @@ const TYPES = {
   ".svg": "image/svg+xml",
   ".wav": "audio/wav",
   ".mp3": "audio/mpeg",
+  ".wasm": "application/wasm",
+  ".glb": "model/gltf-binary",
+  ".vrm": "model/gltf-binary",
+  ".vrma": "model/gltf-binary",
+  ".gltf": "model/gltf+json",
+  ".ktx2": "image/ktx2",
 };
 
 /**
@@ -353,7 +359,7 @@ export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3 } 
 /** Terminal lines for the runs a reviewer must look at. */
 export function describeText(check) {
   if (!check) return [];
-  if (check.skipped) return [check.skipped];
+  if (check.skipped) return [check.note ? `text check skipped (${check.skipped}): ${check.note}` : check.skipped];
   const q = (s) => `"${s.length > 60 ? s.slice(0, 57) + "…" : s}"`;
   const line = (r) =>
     r.kind === "collision"

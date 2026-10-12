@@ -145,8 +145,35 @@ export function validateFilm(
     }
     return f;
   };
-  const composition = data.composition ?? "composition/draw.js";
-  const source = local(composition, "$.composition");
+  // External engine: a local command renders the picture as PNG frames; the browser composition,
+  // when one is declared, becomes a transparent overlay (subtitles over 3D) composited on top.
+  let engine = null;
+  if (data.engine !== undefined) {
+    const e = data.engine;
+    if (!e || typeof e !== "object" || Array.isArray(e) || !["browser", "command"].includes(e.type))
+      error("$.engine", '{"type": "browser"} or {"type": "command", "command": ["blender", "-b", "-P", "scene.py", "--"], "cwd": ".", "env": {}}');
+    else if (e.type === "command") {
+      if (!Array.isArray(e.command) || !e.command.length || e.command.length > 64 || e.command.some((x) => typeof x !== "string" || !x || x.length > 4096 || /\x00/.test(x)))
+        error("$.engine.command", "an argv array of non-empty strings, e.g. [\"blender\", \"-b\", \"-P\", \"scene.py\", \"--\"]");
+      let cwd = path.resolve(dir);
+      if (e.cwd !== undefined) {
+        cwd = typeof e.cwd === "string" && e.cwd ? path.resolve(dir, e.cwd) : null;
+        if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) error("$.engine.cwd", "a directory, relative to the film");
+      }
+      if (e.env !== undefined && (!e.env || typeof e.env !== "object" || Array.isArray(e.env) || Object.entries(e.env).some(([k, v]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || typeof v !== "string")))
+        error("$.engine.env", "an object of environment variables with string values");
+      // Arguments naming a file in the film folder are passed as absolute paths, whatever cwd is.
+      const args = (Array.isArray(e.command) ? e.command : []).map((x) => {
+        if (typeof x !== "string" || x.startsWith("-") || path.isAbsolute(x) || /^[a-z]+:/i.test(x)) return x;
+        const f = path.resolve(dir, x);
+        return inside(dir, f) && fs.existsSync(f) && fs.statSync(f).isFile() && (x.includes("/") || x.includes(".")) ? f : x;
+      });
+      engine = { type: "command", command: args, cwd, env: e.env ?? {} };
+      warnings.push({ path: "$.engine", message: `renders with a local command (${e.command?.[0]}): it runs arbitrary code on this machine and needs --allow-code; it must draw frame N from time N/fps only` });
+    }
+  }
+  const composition = engine && data.composition === undefined ? null : (data.composition ?? "composition/draw.js");
+  const source = composition === null ? null : local(composition, "$.composition");
   const libraries = [];
   if (data.libraries !== undefined && !Array.isArray(data.libraries))
     error("$.libraries", "an array of local, bundled browser scripts");
@@ -170,8 +197,10 @@ export function validateFilm(
         "$.composition",
         "keep the drawing code below 500 KB; put assets in files",
       );
+    // Declared files are loaded from the page's own folder; host names stay forbidden.
+    const loads = data.files && typeof data.files === "object" && Object.keys(data.files).length;
     for (const issue of lintCustomHtml(src))
-      error(
+      if (!(loads && issue.rule === "network" && /^(fetch|XMLHttpRequest)$/.test(issue.match))) error(
         "$.composition",
         `${issue.rule}: ${issue.match}; render from time with local assets`,
       );
@@ -384,6 +413,18 @@ export function validateFilm(
     const f = local(v, `$.assets.${k}`);
     if (f) fileAssets[k] = f;
   }
+  // Any other local file a browser library or an external engine loads (glb, vrm, hdr, wasm, json…).
+  const files = {};
+  if (data.files !== undefined && (!data.files || typeof data.files !== "object" || Array.isArray(data.files)))
+    error("$.files", 'named local files: {"alice": "models/alice.vrm"}');
+  let fileBytes = 0;
+  for (const [k, v] of Object.entries(data.files ?? {})) {
+    if (!/^[a-z][a-z0-9-]{0,39}$/i.test(k)) error(`$.files.${k}`, "a name: a letter, then letters, digits or -");
+    const f = local(v, `$.files.${k}`);
+    if (f) ((files[k] = f), (fileBytes += fs.statSync(f).size));
+  }
+  if (fileBytes > 200e6)
+    warnings.push({ path: "$.files", message: `${Math.round(fileBytes / 1e6)} MB of files are copied into every language and format build; files over 200 MB are kept in snapshots by hash only` });
   // Footage: frames are extracted at build time for the declared film window, so every
   // film time maps to one source frame and the page stays a pure function of time.
   const videos = {};
@@ -451,6 +492,8 @@ export function validateFilm(
       bpm,
       tracks,
       fileAssets,
+      files,
+      engine,
       videos,
       libraries,
       dir,
@@ -731,13 +774,23 @@ export function filmCaptions(film, lang, voiceTracks) {
   return out.sort((a, b) => a.start - b.start);
 }
 
+// Where platform UI leaves the picture visible; film-runtime.js computes the same box as view.safe.
+export const safeBox = (w, h) =>
+  h > w
+    ? { x: w * 0.06, y: h * 0.1, w: w * 0.8, h: h * 0.66 }
+    : { x: w * 0.05, y: h * 0.06, w: w * 0.9, h: h * 0.88 };
+
 export async function buildFilm(film, lang, format, outDir, { range = null, guides = false } = {}) {
   claimDir(outDir);
   const [w, h] = FILM_FORMATS[format],
     fmt = { w, h, vertical: h > w, name: format };
+  // With an external engine the page is a transparent layer over its frames (or empty, carrying
+  // only the sound): nothing paints a background, and blur would average against transparency.
+  const overlay = film.engine?.type === "command";
   // Copy declared assets only. Never sweep a project folder containing credentials.
   fs.mkdirSync(path.join(outDir, "composition"));
-  fs.copyFileSync(film.source, path.join(outDir, "composition", "draw.js"));
+  if (film.source) fs.copyFileSync(film.source, path.join(outDir, "composition", "draw.js"));
+  else fs.writeFileSync(path.join(outDir, "composition", "draw.js"), "window.drawFrame = function () {};\n");
   const scripts = film.libraries
     .map((f, i) => {
       const rel = `composition/library-${i}.js`;
@@ -751,6 +804,13 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     const rel = `assets/${key}${path.extname(file)}`;
     fs.copyFileSync(file, path.join(outDir, rel));
     assets[key] = rel;
+  }
+  const files = {};
+  if (Object.keys(film.files ?? {}).length) fs.mkdirSync(path.join(outDir, "assets", "files"));
+  for (const [key, file] of Object.entries(film.files ?? {})) {
+    const rel = `assets/files/${key}${path.extname(file)}`;
+    fs.copyFileSync(file, path.join(outDir, rel));
+    files[key] = rel;
   }
   const videos = {};
   for (const [key, v] of Object.entries(film.videos ?? {})) {
@@ -775,7 +835,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     // The kit draws characters of its own (e.g. "−" and "," in count()).
     JSON.stringify(film.copy) +
       JSON.stringify(film.data ?? {}) +
-      fs.readFileSync(film.source, "utf8") +
+      (film.source ? fs.readFileSync(film.source, "utf8") : "") +
       fs.readFileSync(path.join(ROOT, "src", "film-kit.js"), "utf8"),
     fontDir,
   );
@@ -866,14 +926,18 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     format,
     copy: film.copy[lang],
     shots: film.shots,
-    motionBlur: film.motionBlur ?? { samples: 1, shutter: 0 },
+    motionBlur: overlay ? { samples: 1, shutter: 0 } : (film.motionBlur ?? { samples: 1, shutter: 0 }),
     look: film.look ?? null,
     data: film.data ?? {},
     offset: range ? range.from : 0,
     guides,
     videos,
     assets,
+    files,
+    overlay,
   };
+  // Declared files are fetched from the page's own folder (and decoders may compile WebAssembly).
+  const loads = Object.keys(files).length > 0;
   fs.writeFileSync(
     path.join(outDir, "runtime.js"),
     fs.readFileSync(path.join(ROOT, "src", "film-runtime.js")),
@@ -884,7 +948,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
   );
   fs.writeFileSync(
     path.join(outDir, "index.html"),
-    `<!doctype html><html lang="${esc(lang)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>${esc(film.name)}</title><style>@font-face{font-family:Film Sans;src:url(assets/fonts/sans.woff2);font-weight:100 900}@font-face{font-family:Film Mono;src:url(assets/fonts/mono.woff2);font-weight:100 800}html,body{margin:0;background:#151515}#root{width:100%;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style></head><body><div id="root" data-composition-id="main" data-no-timeline data-width="${w}" data-height="${h}" data-duration="${range ? range.to - range.from : film.duration}"><canvas id="film-canvas" width="${w}" height="${h}"></canvas>${audio.join("")}</div><script id="film-config" type="application/json">${JSON.stringify(config).replace(/</g, "\\u003c")}</script>${scripts}<script src="kit.js"></script><script src="composition/draw.js"></script><script src="runtime.js"></script></body></html>`,
+    `<!doctype html><html lang="${esc(lang)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'${loads ? " 'wasm-unsafe-eval'" : ""}; style-src 'self' 'unsafe-inline'; connect-src ${loads ? "'self' data: blob:" : "'none'"}; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>${esc(film.name)}</title><style>@font-face{font-family:Film Sans;src:url(assets/fonts/sans.woff2);font-weight:100 900}@font-face{font-family:Film Mono;src:url(assets/fonts/mono.woff2);font-weight:100 800}html,body{margin:0;background:${overlay ? "transparent" : "#151515"}}#root{width:100%;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style></head><body><div id="root" data-composition-id="main" data-no-timeline data-width="${w}" data-height="${h}" data-duration="${range ? range.to - range.from : film.duration}"><canvas id="film-canvas" width="${w}" height="${h}"></canvas>${audio.join("")}</div><script id="film-config" type="application/json">${JSON.stringify(config).replace(/</g, "\\u003c")}</script>${scripts}<script src="kit.js"></script><script src="composition/draw.js"></script><script src="runtime.js"></script></body></html>`,
   );
   return {
     range,
@@ -911,5 +975,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     narrationStem,
     narrationTracks: voiceTracks,
     narrationRequired: film.voiceover !== false,
+    overlay,
+    config,
   };
 }

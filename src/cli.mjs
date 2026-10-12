@@ -48,6 +48,7 @@ import { checkNarration, describeNarration, narrationItems } from "./narration-c
 import { probeText, describeText } from "./text-probe.mjs";
 import { createSnapshot, findSnapshot, restoreSnapshot } from "./snapshot.mjs";
 import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry, writeReleaseManifest } from "./release.mjs";
+import { compositeStill, compositeVideo, frameName, frameRange, runEngine, splitFrames } from "./engine.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(
@@ -105,6 +106,8 @@ Options for still/render:
   --allow-blue-purple "why"  Deliver a blue-purple film (e.g. a Starry Night study), recording why
   --gpu               Render on the GPU: faster, but frames may differ by invisible noise between runs
                       (default: software rendering, bit-identical output for the same brief)
+  --workers <n>       still/render: processes an external engine ("engine": {"type": "command"}) runs at
+                      once, each on its own contiguous frame range (default 1); also passed to the browser renderer
   --json              Machine-readable result on stdout (compact; --verbose adds every measurement)
 
 project defaults to ./film.json, otherwise ./brief.json. Docs: references/film.md`;
@@ -188,11 +191,14 @@ export async function main(argv) {
         "no-asr": { type: "boolean" },
         "no-text-check": { type: "boolean" },
         "no-video": { type: "boolean" },
+        workers: { type: "string" },
       },
     });
   } catch (e) {
     return fail(e.message);
   }
+  if (args.values.workers !== undefined && !/^([1-9]|[12][0-9]|3[0-2])$/.test(args.values.workers))
+    return fail("--workers takes a whole number from 1 to 32", args.values.json);
   if (cmd !== "upgrade") await maybeNotify(VERSION);
   try {
     return await commands[cmd](args.values, args.positionals);
@@ -746,10 +752,12 @@ async function render(o, [briefPath]) {
         if (blockedPreview) return { ok: false, id, error: blockedPreview };
         const tmpPreview = path.join(proj.dir, "preview.mp4");
         if (!o.json) console.error(`previewing ${id} ${from}–${to}s (silent, no delivery checks)…`);
-        const hf = await runHyperframes(
-          ["render", proj.dir, "--output", tmpPreview, "--fps", String(proj.fps), "--quality", "draft", "--quiet", o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
-          {},
-        );
+        const hf = brief.engine
+          ? await engineRender(brief, proj, tmpPreview, { ...o, quality: "draft" })
+          : await runHyperframes(
+              ["render", proj.dir, "--output", tmpPreview, "--fps", String(proj.fps), "--quality", "draft", "--quiet", ...hfWorkers(o), o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
+              {},
+            );
         if (hf.code !== 0 || !fs.existsSync(tmpPreview))
           return { ok: false, id, error: hf.out.trim().split("\n").slice(-15).join("\n") };
         fs.mkdirSync(path.dirname(previewFile), { recursive: true });
@@ -771,7 +779,8 @@ async function render(o, [briefPath]) {
       // Text check before capture: measured boxes of every drawn string against the frame.
       let textCheck = null;
       if (proj.film && !o["no-text-check"]) {
-        textCheck = await probeText(proj.dir, proj.total);
+        // An engine's own text is pixels; only a composition overlay's strings can be measured.
+        textCheck = brief.engine && !brief.source ? ENGINE_TEXT : await probeText(proj.dir, proj.total);
         if (!o.json) for (const line of describeText(textCheck)) console.error(`warning: ${id}: ${line}`);
         const off = textCheck.runs?.filter((x) => x.kind === "frame" || x.kind === "collision") ?? [];
         if (o.gate && off.length)
@@ -781,23 +790,26 @@ async function render(o, [briefPath]) {
       fs.rmSync(tmp, { force: true });
       if (!o.json)
         console.error(`rendering ${id} (${proj.total.toFixed(1)}s)…`);
-      const hf = await runHyperframes(
-        [
-          "render",
-          proj.dir,
-          "--output",
-          tmp,
-          "--fps",
-          String(proj.fps),
-          "--quality",
-          quality,
-          // A release renders near-lossless first; the platform masters are encoded from it.
-          ...(o.release ? ["--crf", "10"] : []),
-          "--quiet",
-          o.gpu ? "--browser-gpu" : "--no-browser-gpu",
-        ].filter(Boolean),
-        {},
-      );
+      const hf = brief.engine
+        ? await engineRender(brief, proj, tmp, { ...o, quality, crf: o.release ? 10 : undefined })
+        : await runHyperframes(
+            [
+              "render",
+              proj.dir,
+              "--output",
+              tmp,
+              "--fps",
+              String(proj.fps),
+              "--quality",
+              quality,
+              // A release renders near-lossless first; the platform masters are encoded from it.
+              ...(o.release ? ["--crf", "10"] : []),
+              "--quiet",
+              ...hfWorkers(o),
+              o.gpu ? "--browser-gpu" : "--no-browser-gpu",
+            ].filter(Boolean),
+            {},
+          );
       const ok =
         hf.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0;
       if (!ok)
@@ -1030,6 +1042,75 @@ function makeRelease({ out, proj, id, file, cover, seconds, force, log }) {
 }
 
 const mb = (b) => `${(b / 1e6).toFixed(1)} MB`;
+const hfWorkers = (o) => (o.workers ? ["--workers", o.workers] : []);
+
+const ENGINE_TEXT = {
+  skipped: "external engine",
+  note: "text the engine draws is pixels the text check cannot measure; draw subtitles and labels in a composition overlay to have them checked",
+};
+
+/**
+ * External engine render: its PNG frames for the film (or the --from/--to window), the browser
+ * layer as a transparent MOV carrying the mix, composited into `file`. Returns { code, out }
+ * like runHyperframes, so the delivery steps after it are the same for both engines.
+ */
+async function engineRender(film, proj, file, o) {
+  const fps = proj.fps,
+    work = `${proj.dir}-engine`,
+    workers = Number(o.workers ?? 1);
+  const range = proj.range ? frameRange(fps, proj.range.from, proj.range.to) : frameRange(fps, 0, proj.total);
+  if (!o.json) console.error(`external engine: frames ${range.from}–${range.to} (${workers} worker${workers > 1 ? "s" : ""})…`);
+  const r = await runEngine(film, proj, splitFrames(range, workers), { workers, work });
+  if (!r.ok) return { code: 1, out: r.error };
+  const layer = path.join(work, "layer.mov");
+  const hf = await runHyperframes(
+    ["render", proj.dir, "--output", layer, "--format", "mov", "--fps", String(fps), "--quiet", ...hfWorkers(o), o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
+    {},
+  );
+  if (hf.code !== 0 || !fs.existsSync(layer)) return { code: 1, out: `browser layer: ${hf.out}` };
+  try {
+    compositeVideo({ frames: r.frames, range, layer, fps, w: proj.fmt.w, h: proj.fmt.h, quality: o.quality, crf: o.crf, out: file });
+  } catch (e) {
+    return { code: 1, out: e.message };
+  }
+  return { code: 0, out: "" };
+}
+
+/**
+ * Stills of an external-engine film: one engine job per requested frame (time t shows frame
+ * floor(t * fps)), the overlay snapshot at that frame's time on top. Writes PNGs named like the
+ * browser snapshots into `dir`.
+ */
+async function engineStills(film, proj, times, dir, o) {
+  const fps = proj.fps,
+    last = Math.round(proj.total * fps) - 1,
+    work = `${proj.dir}-engine`,
+    workers = Number(o.workers ?? 1);
+  const ks = times.map((t) => Math.min(last, Math.floor(t * fps + 1e-6)));
+  const unique = [...new Set(ks)].sort((a, b) => a - b);
+  const r = await runEngine(film, proj, unique.map((k) => ({ from: k, to: k })), { workers, work });
+  if (!r.ok) return { code: 1, out: r.error };
+  let layers = null;
+  if (film.source) {
+    const layerDir = path.join(work, "layer");
+    const hf = await runHyperframes(
+      ["snapshot", proj.dir, "--at", ks.map((k) => (k / fps).toFixed(4)).join(","), "--no-end", "--output", layerDir, o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
+      {},
+    );
+    layers = fs.existsSync(layerDir)
+      ? fs.readdirSync(layerDir).filter((f) => f.endsWith(".png")).sort((a, b) => a.localeCompare(b, "en", { numeric: true })).map((f) => path.join(layerDir, f))
+      : [];
+    if (hf.code !== 0 || layers.length !== ks.length) return { code: 1, out: `overlay snapshot: ${hf.out}` };
+  }
+  try {
+    ks.forEach((k, i) =>
+      compositeStill({ frame: path.join(r.frames, frameName(k)), layer: layers?.[i], w: proj.fmt.w, h: proj.fmt.h, out: path.join(dir, `frame-${String(i).padStart(2, "0")}-at-${+(k / fps).toFixed(3)}s.png`) }),
+    );
+  } catch (e) {
+    return { code: 1, out: e.message };
+  }
+  return { code: 0, out: "" };
+}
 
 /** "9MB" / "9.5M" / "9000000" -> bytes (1 MB = 1,000,000 bytes). null when not given, undefined when invalid. */
 export function parseSize(s) {
@@ -1231,8 +1312,8 @@ async function still(o, [briefPath]) {
       return fail("--onion takes a range of seconds, e.g. --onion 1.2-2 (or 1.2-2:12 for 12 frames, 2–24)", o.json);
     if (at || shotIds || everyBeats) return fail("--onion replaces --at/--shot/--beats; pass one of them", o.json);
   }
-  const r = await each(briefPath, o, async (proj, id, out) => {
-    if (onion) return onionSkin(proj, id, out, onion, o);
+  const r = await each(briefPath, o, async (proj, id, out, brief) => {
+    if (onion) return onionSkin(proj, id, out, onion, o, brief);
     // --beats n: a frame on every n-th beat of the film's grid, the hits a cut or a UI change should land on.
     let beatTimes = null;
     if (everyBeats) {
@@ -1271,24 +1352,27 @@ async function still(o, [briefPath]) {
     // Authored films: draw the first time again at the end, after the page has drawn the others.
     // The renderer seeks backward and splits frames among workers, so a picture that depends on
     // what was drawn before flickers in the MP4.
-    const probe = proj.film
+    // An external engine is trusted to be a function of the frame number; it is not re-run.
+    const probe = proj.film && !brief.engine
       ? times.length > 1
         ? [times[0]]
         : [Math.min(proj.total - 0.05, times[0] + 1), times[0]]
       : [];
-    const hf = await runHyperframes(
-      [
-        "snapshot",
-        proj.dir,
-        "--at",
-        [...times, ...probe].map((t) => t.toFixed(3)).join(","),
-        "--no-end",
-        "--output",
-        dir,
-        o.gpu ? "--browser-gpu" : "--no-browser-gpu",
-      ],
-      {},
-    );
+    const hf = brief.engine
+      ? await engineStills(brief, proj, times, dir, o)
+      : await runHyperframes(
+          [
+            "snapshot",
+            proj.dir,
+            "--at",
+            [...times, ...probe].map((t) => t.toFixed(3)).join(","),
+            "--no-end",
+            "--output",
+            dir,
+            o.gpu ? "--browser-gpu" : "--no-browser-gpu",
+          ],
+          {},
+        );
     const pngs = fs.existsSync(dir)
       ? fs
           .readdirSync(dir)
@@ -1323,7 +1407,7 @@ async function still(o, [briefPath]) {
     // Text check over the whole film, not only the sampled frames.
     let text = null;
     if (proj.film && !o["no-text-check"] && !proj.range) {
-      text = await probeText(proj.dir, proj.total);
+      text = brief.engine && !brief.source ? ENGINE_TEXT : await probeText(proj.dir, proj.total);
       if (!o.json) for (const line of describeText(text)) console.error(`warning: ${id}: ${line}`);
     }
     return { ok: true, id, frames: pngs, sheet, at: times, ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs } } : {}) };
@@ -1346,16 +1430,18 @@ async function still(o, [briefPath]) {
 // Onion skin: frames evenly spaced in time, averaged into one PNG, later frames a little stronger
 // so the direction reads. Even ghost spacing is constant speed; spacing that tightens towards the
 // ends is easing; one wide gap is a jump.
-async function onionSkin(proj, id, out, { from, to, n }, o) {
+async function onionSkin(proj, id, out, { from, to, n }, o, brief) {
   const end = Math.min(to, proj.total - 1 / proj.fps);
   if (from >= end) return { ok: false, id, error: `--onion must lie within the film (0–${proj.total}s)` };
   const times = Array.from({ length: n }, (_, i) => from + ((end - from) * i) / (n - 1));
   const dir = path.join(out, "stills", `${id}-onion`);
   claimDir(dir);
-  const hf = await runHyperframes(
-    ["snapshot", proj.dir, "--at", times.map((t) => t.toFixed(3)).join(","), "--no-end", "--output", dir, o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
-    {},
-  );
+  const hf = brief?.engine
+    ? await engineStills(brief, proj, times, dir, o)
+    : await runHyperframes(
+        ["snapshot", proj.dir, "--at", times.map((t) => t.toFixed(3)).join(","), "--no-end", "--output", dir, o.gpu ? "--browser-gpu" : "--no-browser-gpu"],
+        {},
+      );
   const pngs = fs.existsSync(dir)
     ? fs.readdirSync(dir).filter((f) => f.endsWith(".png")).sort((a, b) => a.localeCompare(b, "en", { numeric: true })).map((f) => path.join(dir, f))
     : [];

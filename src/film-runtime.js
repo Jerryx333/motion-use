@@ -169,7 +169,8 @@
       window.drawFrame(scratch, at, film, view, motion);
       scratch.restore();
       if (film.guides) drawGuides(scratch);
-      // Running average in premultiplied alpha; every drawFrame must paint an opaque background.
+      // Running average in premultiplied alpha; every drawFrame must paint an opaque background
+      // (an overlay over external engine frames paints none and always has one sample).
       ctx.globalAlpha = 1 / (i + 1);
       ctx.drawImage(layer, 0, 0);
     }
@@ -356,6 +357,8 @@
         window.filmAssets[key] = image;
       }),
     );
+    // Declared files (models, environment maps, decoders) as URLs a loader can fetch.
+    window.filmFiles = { ...(film.files ?? {}) };
     // Optional setup: a local library can prepare a renderer or geometry once.
     // A WebGL author can draw its offscreen renderer into ctx on each drawFrame.
     if (typeof window.setupFilm === "function")

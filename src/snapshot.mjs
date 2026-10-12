@@ -9,6 +9,10 @@ import path from "node:path";
 import { MANIFEST as VO_MANIFEST } from "./voiceover.mjs";
 
 const BIG = 200e6; // larger inputs are recorded by hash only
+const isInside = (base, f) => {
+  const r = path.relative(base, f);
+  return Boolean(r) && !r.startsWith("..") && !path.isAbsolute(r);
+};
 
 const hashFile = (f) => {
   const h = crypto.createHash("sha256");
@@ -30,6 +34,12 @@ export function filmInputs(film, filmFile) {
     { role: "composition", file: film.source },
     ...(film.libraries ?? []).map((file) => ({ role: "composition", file })),
     ...Object.values(film.fileAssets ?? {}).map((file) => ({ role: "asset", file })),
+    ...Object.values(film.files ?? {}).map((file) => ({ role: "file", file })),
+    // An external engine's command is in film.json; the files it names inside the project
+    // (scene.py, scene.blend) are inputs like the drawing code.
+    ...(film.engine?.command ?? [])
+      .filter((a) => path.isAbsolute(a) && film.dir && isInside(film.dir, a) && fs.statSync(a, { throwIfNoEntry: false })?.isFile())
+      .map((file) => ({ role: "engine", file })),
     ...Object.values(film.videos ?? {}).map((v) => ({ role: "footage", file: v.file })),
     ...(film.musicFile ? [{ role: "music", file: film.musicFile }] : []),
     ...(film.tracks ?? []).map((a) => ({ role: a.role === "voiceover" ? "voiceover" : "audio", file: a.file, lang: a.lang, id: a.id })),
@@ -69,7 +79,7 @@ export function createSnapshot(film, filmFile, out, { version } = {}) {
     .update(JSON.stringify(files.map((f) => [f.path, f.sha256])))
     .digest("hex")
     .slice(0, 12);
-  const record = { id, film: path.relative(base, filmFile), created: new Date().toISOString(), motion_use: version, project: base, files };
+  const record = { id, film: path.relative(base, filmFile), created: new Date().toISOString(), motion_use: version, project: base, ...(film.engine ? { engine: { command: film.engine.command, cwd: film.engine.cwd } } : {}), files };
   const file = path.join(store, `${id}.json`);
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(record, null, 2) + "\n");
   return record;
