@@ -8,6 +8,7 @@ mod page;
 mod shape;
 mod style;
 mod text;
+mod webgl;
 
 use anyhow::{anyhow, bail, Context, Result};
 use js::{Engine, Mode};
@@ -43,7 +44,12 @@ Options:
                   encoder the caller runs (motion-use); a job does the same with
                   \"formats\": [\"rgba-stream\"], \"stream\": <path>
   --stats         print timing JSON on stdout (stderr when frames go to stdout)
-  --capabilities  print what this build can do as JSON (motion-use checks it)
+  --gl <backend>  WebGL backend: auto (default: the GPU, else SwiftShader), gpu, metal, vulkan,
+                  swiftshader (CPU, same pixels as Chrome's software GL), d3d11, off; same as
+                  MOTION_RENDER_GL. WebGL runs on ANGLE, found next to this binary, in
+                  MOTION_RENDER_ANGLE_DIR or ~/.cache/motion-render/angle (native/scripts/fetch-angle.sh)
+  --capabilities  print what this build can do as JSON (motion-use checks it); \"webgl\" says
+                  whether ANGLE loaded and made a context on this machine
 ";
 
 #[derive(Clone)]
@@ -323,16 +329,28 @@ fn real_main() -> Result<()> {
         println!("motion-render {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    // --gl <backend> is MOTION_RENDER_GL (auto, gpu, metal, vulkan, swiftshader, d3d11, off), set
+    // before any thread starts
+    if let Some(k) = args.iter().position(|a| a == "--gl") {
+        let v = args.get(k + 1).ok_or_else(|| anyhow!("--gl needs a value"))?;
+        std::env::set_var("MOTION_RENDER_GL", v);
+    }
     if args.iter().any(|a| a == "--capabilities") {
-        // webgl flips to true when the wgpu backend lands; motion-use routes WebGL films by it.
-        println!("{}", json!({"version": env!("CARGO_PKG_VERSION"), "canvas2d": true, "webgl": false, "stream": true, "probe": true, "job_stream": true, "footage": true}));
+        // webgl: whether ANGLE loads and makes a context here (motion-use routes WebGL films by it)
+        let gl = webgl::probe();
+        let mut caps = json!({"version": env!("CARGO_PKG_VERSION"), "canvas2d": true, "webgl": gl.is_ok(), "stream": true, "probe": true, "job_stream": true, "footage": true});
+        match gl {
+            Ok((backend, dir)) => caps["gl"] = json!({"backend": backend, "angle": dir}),
+            Err(e) => caps["webgl_error"] = json!(e),
+        }
+        println!("{}", caps);
         return Ok(());
     }
     let mut opts: std::collections::HashMap<String, String> = Default::default();
     let mut flags: std::collections::HashSet<String> = Default::default();
     let mut pos: Vec<String> = vec![];
     let mut i = 0;
-    let valued = ["--job", "--at", "--frames", "--fps", "--out", "--format", "--ffmpeg", "--quality", "--workers", "--size", "--stream", "--times"];
+    let valued = ["--gl", "--job", "--at", "--frames", "--fps", "--out", "--format", "--ffmpeg", "--quality", "--workers", "--size", "--stream", "--times"];
     while i < args.len() {
         let a = &args[i];
         if valued.contains(&a.as_str()) {

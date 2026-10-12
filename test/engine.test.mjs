@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { initFilm, validateFilm, checkFilm, buildFilm } from "../src/film.mjs";
 import { filmInputs } from "../src/snapshot.mjs";
-import { checkFrames, frameRange, splitFrames } from "../src/engine.mjs";
+import { checkFrames, engineArgv, frameRange, splitFrames } from "../src/engine.mjs";
 import { runHyperframes } from "../src/hf.mjs";
 import { main } from "../src/cli.mjs";
 
@@ -239,4 +239,13 @@ test("external engine with a composition: subtitles drawn as a transparent overl
   assert.ok(near(pixel(still.frames[0], 300, 200), [255, 255, 255]));
   assert.ok(near(pixel(still.frames[0], 1800, 40), TEAL));
   assert.ok(fs.existsSync(still.sheet));
+});
+
+test("a bare motion-render engine command runs the renderer motion-use found", () => {
+  const found = () => ({ bin: "/opt/mu/native/bin/motion-render", caps: {} });
+  assert.deepEqual(engineArgv({ command: ["motion-render", "/f/composition/engine.html"] }, found), ["/opt/mu/native/bin/motion-render", "/f/composition/engine.html"]);
+  // not installed: left to PATH; other commands untouched
+  assert.deepEqual(engineArgv({ command: ["motion-render", "x.html"] }, () => ({ missing: "no" })), ["motion-render", "x.html"]);
+  assert.deepEqual(engineArgv({ command: ["blender", "-b"] }, found), ["blender", "-b"]);
+  assert.deepEqual(engineArgv({ command: ["/usr/local/bin/motion-render", "a"] }, found), ["/usr/local/bin/motion-render", "a"]);
 });

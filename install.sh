@@ -21,7 +21,8 @@
 #   MOTION_RENDER_ARCHIVE install motion-render from this local .tar.gz (checksum file next to it)
 #
 # The native renderer of the same release (motion-render-vX.Y.Z-<os>-<arch>.tar.gz, macOS and
-# Linux on arm64/x64) goes into versions/X.Y.Z/native/bin when the release has one for this machine.
+# Linux on arm64/x64) goes into versions/X.Y.Z/native/bin when the release has one for this machine,
+# with the ANGLE libraries it uses for WebGL (libEGL, libGLESv2, SwiftShader) next to it.
 set -eu
 
 REPO="leeguooooo/motion-use"
@@ -132,7 +133,13 @@ if [ -n "$native_archive" ]; then
     tar -xzf "$native_archive" -C "$tmp/n"
     nbin=$(find "$tmp/n" -type f -name motion-render | head -1)
     if [ -n "$nbin" ] && cp "$nbin" "$stage/native/bin/motion-render" && chmod +x "$stage/native/bin/motion-render" && "$stage/native/bin/motion-render" --version >/dev/null 2>&1; then
-      say "native renderer: $("$stage/native/bin/motion-render" --version)"
+      # ANGLE (WebGL) ships in the same tarball; motion-render finds it next to itself
+      ndir=$(dirname "$nbin")
+      for f in "$ndir"/libEGL.* "$ndir"/libGLESv2.* "$ndir"/libvk_swiftshader.* "$ndir"/libvulkan.so.1 "$ndir"/vk_swiftshader_icd.json "$ndir"/LICENSES.chromium.html; do
+        if [ -f "$f" ]; then cp "$f" "$stage/native/bin/"; fi
+      done
+      if "$stage/native/bin/motion-render" --capabilities 2>/dev/null | grep -q '"webgl":true'; then gl="WebGL on ANGLE"; else gl="no WebGL here: three.js films render in Chrome"; fi
+      say "native renderer: $("$stage/native/bin/motion-render" --version) ($gl)"
     else
       rm -rf "$stage/native/bin"
       say "native renderer: the downloaded binary does not run here; films render in Chrome"

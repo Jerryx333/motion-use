@@ -98,12 +98,12 @@ brief 是一组场景：`title`、`terminal`、`steps`、`diagram`、`features`�
 
 ## 环境要求
 
-motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片默认用 `motion-render`（Rust + Skia + V8）画，帧直接灌进 FFmpeg，端到端大约快一倍；用了 WebGL 或者没装这个二进制时自动改用 Chrome。
+motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片默认用 `motion-render`（Rust + Skia + V8）画，WebGL 和 three.js 走 ANGLE（Chrome 自己用的 GL 层），帧直接灌进 FFmpeg：2D 影片端到端大约快一倍，WebGL 影片快好几倍。没装这个二进制或者它的 ANGLE 库时自动改用 Chrome。
 
 - Node.js 22 或更新（安装脚本会检查）
 - FFmpeg（`brew install ffmpeg`、`apt install ffmpeg`）
-- motion-render：install.sh 从同一个 release 装好（macOS、Linux 的 arm64 和 x64）
-- Chrome：用你已安装的 Chrome，或者 `motion-use doctor --install-browser`（场景模板、WebGL 影片、对照渲染器要用）
+- motion-render：install.sh 从同一个 release 装好（macOS、Linux 的 arm64 和 x64），连同 WebGL 要用的 ANGLE 库
+- Chrome：用你已安装的 Chrome，或者 `motion-use doctor --install-browser`（场景模板、对照渲染器、回落时要用）
 
 在 macOS（Apple Silicon）上验证过。CI 在 macOS 和 Ubuntu 上跑测试和一次真实渲染。暂不支持 Windows。
 

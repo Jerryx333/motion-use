@@ -1,8 +1,11 @@
 name: Native renderer
 # Builds motion-render (native/) on each platform's own runner: rusty_v8 and skia-safe download
 # prebuilt V8 and Skia for all four targets, so nothing is cross-compiled. Each build is smoke-tested
-# (a film page streamed into ffmpeg, the text probe) and packaged as
+# (a film page streamed into ffmpeg, the text probe, WebGL) and packaged as
 # motion-render-v<version>-<os>-<arch>.tar.gz + .sha256; release.yml attaches them to the release.
+# WebGL runs on ANGLE: libEGL/libGLESv2 and SwiftShader from a pinned Electron release
+# (native/scripts/fetch-angle.sh, checksum-verified) go into the tarball next to the binary. A
+# platform without them ships without, and its motion-render reports "webgl": false.
 on:
   pull_request:
     paths: ["native/**", ".github/workflows/native.yml", "src/film-runtime.js", "src/film-kit.js"]
@@ -42,6 +45,15 @@ jobs:
           key: native-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('native/Cargo.lock') }}
       # Fonts come from motion-use (MOTION_USE_ROOT, or the install next to the binary), not the binary.
       - run: cargo build --release --locked --no-default-features --manifest-path native/Cargo.toml
+      - name: ANGLE for WebGL
+        id: angle
+        run: |
+          if sh native/scripts/fetch-angle.sh "$RUNNER_TEMP/angle"; then
+            echo "dir=$RUNNER_TEMP/angle" >> "$GITHUB_OUTPUT"
+            ls -la "$RUNNER_TEMP/angle"
+          else
+            echo "::warning::no ANGLE for ${{ matrix.os }}-${{ matrix.arch }}: motion-render ships without WebGL here"
+          fi
       - name: version matches package.json
         run: test "$(native/target/release/motion-render --version)" = "motion-render $(node -p 'require("./package.json").version')"
       - name: smoke test
@@ -55,6 +67,20 @@ jobs:
           native/target/release/motion-render render "$RUNNER_TEMP/page/index.html" --frames 0-59 --workers 2 --stream - \
             | ffmpeg -v error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -framerate 30 -i - -c:v libx264 -preset ultrafast "$RUNNER_TEMP/smoke.mp4"
           test "$(ffprobe -v error -count_frames -select_streams v -show_entries stream=nb_read_frames -of csv=p=0 "$RUNNER_TEMP/smoke.mp4")" = 60
+      - name: WebGL smoke test
+        if: steps.angle.outputs.dir != ''
+        env:
+          MOTION_RENDER_ANGLE_DIR: ${{ steps.angle.outputs.dir }}
+          MOTION_USE_ROOT: ${{ github.workspace }}
+        run: |
+          caps=$(native/target/release/motion-render --capabilities)
+          echo "$caps"
+          node -e 'const c=JSON.parse(process.argv[1]);if(!c.webgl){console.error(c.webgl_error);process.exit(1)}' "$caps"
+          # the probe asserts the WebGL surface in setupFilm (a mismatch fails the render)
+          node native/bench/build-page.mjs native/bench/fixtures/webgl-probe en landscape "$RUNNER_TEMP/glprobe"
+          native/target/release/motion-render render "$RUNNER_TEMP/glprobe/index.html" --at 0.5,1.5 --out "$RUNNER_TEMP/glprobe-out"
+          native/target/release/motion-render render "$RUNNER_TEMP/glprobe/index.html" --at 0.5 --gl swiftshader --out "$RUNNER_TEMP/glprobe-sw"
+          cargo test --release --locked --no-default-features --manifest-path native/Cargo.toml
       - name: package
         run: |
           v=$(node -p 'require("./package.json").version')
@@ -62,6 +88,14 @@ jobs:
           mkdir -p "dist/$name"
           cp native/target/release/motion-render "dist/$name/"
           cp LICENSE "dist/$name/"
+          if [ -n "${{ steps.angle.outputs.dir }}" ]; then
+            # ANGLE beside the binary, where motion-render looks first
+            a="${{ steps.angle.outputs.dir }}"
+            cp "$a"/libEGL.* "$a"/libGLESv2.* "$a"/libvk_swiftshader.* "$a"/vk_swiftshader_icd.json "dist/$name/"
+            for f in libvulkan.so.1 LICENSES.chromium.html; do if [ -f "$a/$f" ]; then cp "$a/$f" "dist/$name/"; fi; done
+            # the packaged binary finds them by its own path, with no environment
+            env -u MOTION_RENDER_ANGLE_DIR "dist/$name/motion-render" --capabilities | tee /dev/stderr | grep -q '"webgl":true'
+          fi
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && if command -v sha256sum >/dev/null; then sha256sum "$name.tar.gz"; else shasum -a 256 "$name.tar.gz"; fi > "$name.tar.gz.sha256")
           ls -la dist

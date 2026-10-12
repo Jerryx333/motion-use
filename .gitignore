@@ -9,6 +9,7 @@ examples/*/voiceover/.motion-use-voiceover.json
 .env.*
 # three.js example: build output and generated score
 examples/*/vendor/
+examples/*/package-lock.json
 examples/*/audio/*.wav
 # `motion-use reference` output: third-party prompts and videos, for study only
 /references/*/

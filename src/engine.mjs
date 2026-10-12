@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { claimDir } from "./build.mjs";
 import { safeBox } from "./film.mjs";
+import { findRenderer } from "./native.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -79,6 +80,19 @@ export function engineJob(film, proj, frames, out, extra = {}) {
 const engineEnv = (engine, jobFile) => ({ ...process.env, MOTION_USE_ROOT: ROOT, ...engine.env, MOTION_USE_JOB: jobFile });
 
 /**
+ * The argv to spawn. A bare `motion-render` is the renderer motion-use found (install.sh's, a
+ * checkout build, MOTION_RENDER, or PATH), so a film can name it without it being on PATH.
+ */
+export function engineArgv(engine, find = findRenderer) {
+  const [cmd, ...args] = engine.command;
+  if (/^motion-render(\.exe)?$/.test(cmd)) {
+    const r = find();
+    if (r.bin) return [r.bin, ...args];
+  }
+  return [cmd, ...args];
+}
+
+/**
  * Start a streaming engine over one range: its job asks for raw RGBA into `fifo`. Returns the
  * child; stdout and stderr are piped for the caller to read.
  */
@@ -86,12 +100,12 @@ export function startStreamingEngine(film, proj, frames, { work, fifo, workers }
   const jobFile = path.join(work, "job-0.json");
   const extra = { formats: ["png", "rgba-stream"], stream: fifo, ...(film.engine.parallel ? { workers } : {}) };
   fs.writeFileSync(jobFile, JSON.stringify(engineJob(film, proj, frames, path.join(work, "frames"), extra), null, 2) + "\n");
-  const [cmd, ...args] = film.engine.command;
+  const [cmd, ...args] = engineArgv(film.engine);
   return spawn(cmd, [...args, "--job", jobFile], { cwd: film.engine.cwd, env: engineEnv(film.engine, jobFile), stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function runOne(engine, jobFile, log) {
-  const [cmd, ...args] = engine.command;
+  const [cmd, ...args] = engineArgv(engine);
   return new Promise((resolve) => {
     let tail = "";
     const child = spawn(cmd, [...args, "--job", jobFile], {

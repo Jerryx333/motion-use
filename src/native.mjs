@@ -77,8 +77,11 @@ export function webglUse(film) {
   return null;
 }
 
-/** motion-render failed because the page asked for a context it does not have (WebGL in phase 1). */
-export const unsupportedContext = (text) => /getContext\("(?:webgl2?|experimental-webgl|webgpu|bitmaprenderer)"\) is not supported|2D canvas only/.test(text ?? "");
+/**
+ * motion-render failed because the page asked for a context it cannot make: WebGPU, or WebGL on a
+ * machine where ANGLE did not load (`getContext("webgl2"): <why>`), or an older binary (2D only).
+ */
+export const unsupportedContext = (text) => /getContext\("(?:webgl2?|experimental-webgl|webgpu|bitmaprenderer)"\)(?: is not supported|: )|2D canvas only/.test(text ?? "");
 
 /**
  * Which renderer draws this film's picture: { renderer: "native"|"chrome", bin, note }.

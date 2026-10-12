@@ -2,7 +2,9 @@
 // A frame-engine page (window.setupEngine(job) / window.renderFrame(t)) rendered by headless
 // Chrome, software GL (SwiftShader, motion-use's default) unless --gpu (Metal). Same protocol as
 // drama-use's scripts/gpu-engine.mjs, kept here so the CPU path can be compared too.
-//   node native/bench/chrome-engine.mjs <page.html> --job <job.json> [--gpu]
+//   node native/bench/chrome-engine.mjs <page.html> --job <job.json> [--gpu] [--time]
+// --time: no files; draw every job frame and print {draw_ms} per frame (renderFrame plus a 1-pixel
+// readback that waits for the GPU), after one warm-up frame.
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -38,7 +40,21 @@ try {
     c.height = j.height;
     if (window.setupEngine) await window.setupEngine(j);
   }, job);
-  for (let f = job.frames.from; f <= job.frames.to; f++) {
+  if (argv.includes("--time")) {
+    const r = await tab.evaluate(async (from, to, fps) => {
+      const c = document.querySelector("canvas"), ctx = c.getContext("2d");
+      await window.renderFrame(from / fps);
+      ctx.getImageData(0, 0, 1, 1);
+      const t0 = performance.now();
+      for (let f = from + 1; f <= to; f++) {
+        await window.renderFrame(f / fps);
+        ctx.getImageData(0, 0, 1, 1);
+      }
+      return { draw_ms: (performance.now() - t0) / Math.max(1, to - from) };
+    }, job.frames.from, job.frames.to, job.fps);
+    console.log(JSON.stringify({ ...r, gpu }));
+    process.exitCode = 0;
+  } else for (let f = job.frames.from; f <= job.frames.to; f++) {
     const b64 = await tab.evaluate(async (t) => {
       await window.renderFrame(t);
       return document.querySelector("canvas").toDataURL("image/png").split(",")[1];

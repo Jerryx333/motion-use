@@ -86,6 +86,7 @@ test("WebGL films go to Chrome: found in the drawing or a library, or reported b
   // once motion-render draws WebGL (capabilities.webgl), the same film renders natively
   assert.equal(chooseRenderer(film, {}, () => ({ bin: "x", version: "0.12.0", caps: { stream: true, probe: true, webgl: true } })).renderer, "native");
   assert.ok(unsupportedContext('motion-render: film setup: getContext("webgl") is not supported by motion-render yet (2D canvas only)'));
+  assert.ok(unsupportedContext('motion-render: film setup: getContext("webgl2"): WebGL needs ANGLE (libEGL + libGLESv2), which was not found'));
   assert.ok(!unsupportedContext("motion-render: frame at 1.0000s: ReferenceError: x is not defined"));
 });
 
@@ -109,7 +110,7 @@ test("without motion-render a film renders in Chrome, and says so in the result"
   assert.match(n.json.error, /--renderer native: turned off/);
 });
 
-test("a page that asks for WebGL at run time falls back to Chrome", { timeout: 300000 }, async (t) => {
+test("a page that asks for WebGL at run time: native draws it with ANGLE, Chrome when ANGLE is off", { timeout: 300000 }, async (t) => {
   if (native.missing) return t.skip("motion-render is not built");
   if (!(await chrome())) return t.skip("no Chrome for rendering");
   // the context name is computed, as three.js does, so only the render itself finds it
@@ -118,10 +119,16 @@ test("a page that asks for WebGL at run time falls back to Chrome", { timeout: 3
     draw: `window.setupFilm = function () { window.gl = document.createElement("canvas").getContext(["web", "gl"].join("")); };
       window.drawFrame = function (c, t, film, view) { c.fillStyle = window.gl ? "#20c040" : "#e02020"; c.fillRect(0, 0, view.width, view.height); };`,
   });
-  const r = cli(["still", dir, "--allow-code", "--at", "0.5", "--no-text-check", "--json"]);
+  if (native.caps.webgl) {
+    const r = cli(["still", dir, "--allow-code", "--at", "0.5", "--no-text-check", "--json"]);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.equal(r.json.outputs[0].renderer, "native");
+  }
+  // MOTION_RENDER_GL=off: motion-render has no WebGL, the render falls back to Chrome and says why
+  const r = cli(["still", dir, "--allow-code", "--at", "0.5", "--no-text-check", "--json", "--force"], { MOTION_RENDER_GL: "off" });
   assert.equal(r.code, 0, r.out + r.err);
   assert.equal(r.json.outputs[0].renderer, "chrome");
-  const said = cli(["still", dir, "--allow-code", "--at", "0.5", "--no-text-check", "--force"]);
+  const said = cli(["still", dir, "--allow-code", "--at", "0.5", "--no-text-check", "--force"], { MOTION_RENDER_GL: "off" });
   assert.equal(said.code, 0, said.err);
   assert.match(said.err, /motion-render cannot draw this film .*webgl.*rendering in Chrome/i);
 });

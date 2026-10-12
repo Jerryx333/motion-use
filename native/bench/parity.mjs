@@ -32,8 +32,8 @@ const EXAMPLES = [
   { name: "ocs-film", configs: [["zh", "landscape"], ["en", "vertical"]] },
   { name: "motion-use-film", configs: [["zh", "landscape"]], footage: true },
 ];
-// three.js / WebGL films: out of scope for motion-render phase 1.
-const SKIPPED = { "motion-use-promo": "three.js (WebGL)", "openai-yarn-film": "three.js (WebGL)" };
+// three.js / WebGL films are measured by webgl.mjs (they need the examples built and ANGLE).
+const SKIPPED = { "motion-use-promo": "three.js (WebGL): see webgl.mjs", "openai-yarn-film": "three.js (WebGL): see webgl.mjs" };
 
 const run = (cmd, argv, o = {}) => {
   const r = spawnSync(cmd, argv, { encoding: "utf8", maxBuffer: 64 << 20, ...o });

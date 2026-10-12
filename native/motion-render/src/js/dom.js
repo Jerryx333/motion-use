@@ -612,7 +612,12 @@
     drawImage(img, ...a) {
       if (img == null) throw new TypeError("drawImage: image is null");
       let kind, src;
-      if (img instanceof HTMLCanvasElement) {
+      if (img && img._gl) img = img.canvas || img;
+      if (img instanceof HTMLCanvasElement && img._gl) {
+        kind = 0;
+        src = N.glSnapshot(img._gl._id);
+        if (src < 0) return;
+      } else if (img instanceof HTMLCanvasElement) {
         kind = 1;
         src = img._id;
       } else if (img instanceof HTMLImageElement) {
@@ -653,7 +658,11 @@
     }
     createPattern(img, repetition) {
       let kind, src;
-      if (img instanceof HTMLCanvasElement) {
+      if (img instanceof HTMLCanvasElement && img._gl) {
+        kind = 0;
+        src = N.glSnapshot(img._gl._id);
+        if (src < 0) return null;
+      } else if (img instanceof HTMLCanvasElement) {
         kind = 1;
         src = img._id;
       } else if (img instanceof HTMLImageElement) {
@@ -788,6 +797,7 @@
     }
     set width(v) {
       this._w = Math.max(0, +v | 0);
+      if (this._gl) return this._gl._resize(this._w, this._h);
       N.canvasResize(this._id, this._w, this._h);
       this._ctx?._reset();
     }
@@ -796,15 +806,30 @@
     }
     set height(v) {
       this._h = Math.max(0, +v | 0);
+      if (this._gl) return this._gl._resize(this._w, this._h);
       N.canvasResize(this._id, this._w, this._h);
       this._ctx?._reset();
     }
     getContext(type, opts) {
       type = String(type);
-      if (type === "2d") return (this._ctx ||= new CanvasRenderingContext2D(this, this._id, opts || {}));
-      if (/^(webgl2?|experimental-webgl|webgpu|bitmaprenderer)$/.test(type)) {
-        N.log(3, `motion-render: getContext("${type}") is not supported in phase 1 (2D canvas only; WebGL comes with the wgpu backend). Render this film with motion-use's browser engine.`);
-        G.__mr.unsupported = `getContext("${type}") is not supported by motion-render yet (2D canvas only)`;
+      if (type === "2d") return this._gl ? null : (this._ctx ||= new CanvasRenderingContext2D(this, this._id, opts || {}));
+      if (type === "webgl2" || type === "webgl" || type === "experimental-webgl") {
+        const v = type === "webgl2" ? 2 : 1;
+        if (this._ctx) return null;
+        if (this._gl) return this._gl._version === v ? this._gl : null;
+        const r = G.__mrWebGL.create(this, v, opts || {});
+        if (typeof r === "string") {
+          N.log(3, `motion-render: getContext("${type}") failed: ${r}`);
+          G.__mr.unsupported = `getContext("${type}"): ${r}`;
+          return null;
+        }
+        // the 2D surface is not used by a WebGL canvas
+        N.canvasResize(this._id, 0, 0);
+        return (this._gl = r);
+      }
+      if (/^(webgpu|bitmaprenderer)$/.test(type)) {
+        N.log(3, `motion-render: getContext("${type}") is not supported (2D and WebGL only). Render this film with motion-use's browser engine.`);
+        G.__mr.unsupported = `getContext("${type}") is not supported by motion-render`;
         return null;
       }
       return null;

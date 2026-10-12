@@ -15,7 +15,7 @@ thread_local! {
     static RT: RefCell<Option<Runtime>> = const { RefCell::new(None) };
 }
 
-fn with_rt<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
+pub(crate) fn with_rt<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
     RT.with(|r| f(r.borrow_mut().as_mut().expect("runtime not initialised")))
 }
 
@@ -590,11 +590,13 @@ fn install_natives(scope: &mut v8::PinScope, global: v8::Local<v8::Object>) {
         },
         "fontCheck" => |s, a, rv| { let st = string(s, &a, 0); rv.set_bool(with_rt(|r| r.fonts.check(&st))); },
     );
+    crate::webgl::install(scope, obj);
     let key = v8::String::new(scope, "__native").unwrap();
     global.set(scope, key.into(), obj.into());
 }
 
 pub const DOM_JS: &str = include_str!("js/dom.js");
+pub const WEBGL_JS: &str = include_str!("js/webgl.js");
 
 /// What drives frames: motion-use's film runtime (hf-seek) or a frame-engine page.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -674,6 +676,7 @@ impl Engine {
         };
         let mut e = Engine { isolate, context, output: 0, mode, background: page.background };
         e.eval("dom.js", DOM_JS)?;
+        e.eval("webgl.js", WEBGL_JS)?;
         let size_js = match size {
             Some((w, h)) => format!("[{},{}]", w, h),
             None => "null".into(),
@@ -760,6 +763,7 @@ impl Engine {
         self.eval("frame", &call)?;
         self.settle(&format!("frame at {:.4}s", t), true)?;
         let size = with_rt(|r| r.read_rgba(self.output, out));
+        crate::webgl::end_frame();
         if let Some(bg) = self.background {
             flatten(out, bg);
         }
@@ -776,6 +780,7 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        crate::webgl::reset();
         RT.with(|r| *r.borrow_mut() = None);
     }
 }

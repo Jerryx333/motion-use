@@ -1944,7 +1944,7 @@ async function doctor(o) {
       ok: !native.missing,
       detail: native.missing
         ? `not installed (optional; films render in Chrome): ${native.missing}`
-        : `motion-render ${native.version} (${native.bin})${native.caps.webgl ? "" : "; WebGL films render in Chrome"}${native.note ? `; ${native.note}` : ""}`,
+        : `motion-render ${native.version} (${native.bin})${native.caps.webgl ? `; WebGL on ANGLE (${native.caps.gl?.backend ?? "?"})` : `; WebGL films render in Chrome${native.caps.webgl_error ? ` (${native.caps.webgl_error})` : ""}`}${native.note ? `; ${native.note}` : ""}`,
     },
     {
       name: "voiceover azure",

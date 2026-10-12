@@ -2,16 +2,17 @@
 // Chrome's raw drawing speed on a built page, without screenshots or encoding: the same
 // headless Chrome HyperFrames uses, the page's own hf-seek, then a full-canvas getImageData
 // (the RGBA readback motion-render also pays). --gpu uses ANGLE/Metal like `--browser-gpu`.
-//   node native/bench/chrome-raw.mjs <page dir> <frames> [--gpu]   → {draw_ms, readback_ms}
+//   node native/bench/chrome-raw.mjs <page dir> <frames> [--gpu] [--from <seconds>]   → {draw_ms, readback_ms}
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import puppeteer from "puppeteer-core";
 
-const [dir, framesArg, gpuFlag] = process.argv.slice(2);
+const [dir, framesArg] = process.argv.slice(2);
 const frames = +framesArg;
-const gpu = gpuFlag === "--gpu";
+const gpu = process.argv.includes("--gpu");
+const fromS = process.argv.includes("--from") ? +process.argv[process.argv.indexOf("--from") + 1] : 0;
 const shell = path.join(os.homedir(), ".cache/hyperframes/chrome/chrome-headless-shell");
 const ver = fs.readdirSync(shell).sort().at(-1);
 const exe = path.join(shell, ver, fs.readdirSync(path.join(shell, ver)).find((d) => d.startsWith("chrome-headless-shell")), "chrome-headless-shell");
@@ -33,7 +34,7 @@ try {
   await tab.setViewport({ width: +m[1], height: +m[2] });
   await tab.goto(`http://127.0.0.1:${server.address().port}/index.html`, { waitUntil: "load" });
   const r = await tab.evaluate(
-    async (frames, fps) => {
+    async (frames, fps, from) => {
       await window.__hf.buildReady["motion-use-film"];
       const c = document.getElementById("film-canvas"), ctx = c.getContext("2d");
       const seek = (t) =>
@@ -42,12 +43,12 @@ try {
           window.dispatchEvent(new CustomEvent("hf-seek", { detail: { time: t, waitUntil: (x) => (p = x) } }));
           (p ?? Promise.resolve()).then(resolve, reject);
         });
-      await seek(0);
+      await seek(from);
       ctx.getImageData(0, 0, 1, 1); // flush
       let draw = 0, read = 0;
       for (let k = 1; k <= frames; k++) {
         const t0 = performance.now();
-        await seek(k / fps);
+        await seek(from + k / fps);
         ctx.getImageData(0, 0, 1, 1); // force the GPU to finish this frame
         const t1 = performance.now();
         ctx.getImageData(0, 0, c.width, c.height);
@@ -58,6 +59,7 @@ try {
     },
     frames,
     config.fps,
+    fromS,
   );
   console.log(JSON.stringify({ ...r, gpu }));
 } finally {

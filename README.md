@@ -98,12 +98,12 @@ Full schema: [references/brief.md](references/brief.md). Examples: [examples/](e
 
 ## Requirements
 
-motion-use is a Node.js program with an optional native renderer: films draw in `motion-render` (Rust, Skia, V8; frames piped straight into FFmpeg, about twice as fast end to end) and fall back to Chrome for WebGL or when the binary is missing.
+motion-use is a Node.js program with an optional native renderer: films draw in `motion-render` (Rust, Skia, V8; WebGL and three.js on ANGLE, the GL layer Chrome uses; frames piped straight into FFmpeg, about twice as fast end to end for 2D films and many times faster for WebGL ones) and fall back to Chrome when the binary or its ANGLE libraries are missing.
 
 - Node.js 22 or newer (the installer checks)
 - FFmpeg (`brew install ffmpeg`, `apt install ffmpeg`)
-- motion-render: installed by install.sh from the same release (macOS and Linux, arm64 and x64)
-- Chrome: your installed Chrome, or `motion-use doctor --install-browser` (scene templates, WebGL films, the reference renderer)
+- motion-render: installed by install.sh from the same release (macOS and Linux, arm64 and x64), with the ANGLE libraries it uses for WebGL
+- Chrome: your installed Chrome, or `motion-use doctor --install-browser` (scene templates, the reference renderer, the fallback)
 
 Verified on macOS (Apple Silicon). The CI workflow runs the tests and a real render on macOS and Ubuntu. Windows is not supported yet.
 
