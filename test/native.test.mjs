@@ -127,6 +127,23 @@ test("ffmpeg keeps duck false music at its volume under voiceover, with its fina
   assert.ok(rms(constant, 3.9, 4) < rms(constant, 3.3, 3.6) * 0.3);
 });
 
+test("strict Canvas checks preserve renderer selection errors and prior still validation", () => {
+  const dir = soundFilm({ duration: 3, draw: 'window.drawFrame = (c) => { c.scale(1.35); };' });
+  for (const [command, extra] of [["still", ["--at", "0.5"]], ["still", ["--onion", "0-1:2"]], ["render", []], ["render", ["--from", "0", "--to", "1"]]]) {
+    const r = cli([command, dir, "--allow-code", "--renderer", "native", "--json", ...extra], { MOTION_RENDER: "0" });
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.json.error, /--renderer native: turned off/);
+    assert.equal(r.json.outputs, undefined);
+    assert.equal(r.json.canvas_check, undefined);
+  }
+  for (const [extra, error] of [[["--at", "3"], /--at must be within/], [["--shot", "unknown"], /--shot: unknown id/], [["--onion", "3-4"], /--onion must lie within/]]) {
+    const r = cli(["still", dir, "--allow-code", "--renderer", "native", "--json", ...extra], { MOTION_RENDER: "0" });
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.json.outputs[0].error, error);
+    assert.equal(r.json.outputs[0].canvas_check, undefined);
+  }
+});
+
 test("without motion-render a film renders in Chrome, and says so in the result", { timeout: 300000 }, async (t) => {
   if (!(await chrome())) return t.skip("no Chrome for rendering");
   const dir = soundFilm({ duration: 3 });

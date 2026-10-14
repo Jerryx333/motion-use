@@ -45,7 +45,7 @@ import { analyzeBeats, decodeMono } from "./beats.mjs";
 import { compareVideos } from "./compare.mjs";
 import { measureMotion, gradeMotion } from "./motion-check.mjs";
 import { checkNarration, describeNarration, narrationItems } from "./narration-check.mjs";
-import { probeText, describeText } from "./text-probe.mjs";
+import { probeText, describeText, probeCanvas, describeCanvas } from "./text-probe.mjs";
 import { createSnapshot, findSnapshot, restoreSnapshot } from "./snapshot.mjs";
 import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry, writeReleaseManifest } from "./release.mjs";
 import { compositeArgs, compositeStill, frameName, frameRange, runEngine, splitFrames, startStreamingEngine } from "./engine.mjs";
@@ -104,6 +104,7 @@ Options for still/render:
                       (reading-time and contrast notes stay warnings)
   --no-asr            render: skip the narration transcription check (--asr-model small|medium|large-v3)
   --no-text-check     still/render: skip measuring drawn text against the frame and safe area
+  --no-canvas-check   still/render: temporarily skip strict Canvas validation for false positives
   --allow-static "why"       Deliver a film that the motion check reads as a slideshow, recording why
   --allow-blue-purple "why"  Deliver a blue-purple film (e.g. a Starry Night study), recording why
   --renderer <r>      still/render: native (motion-render: Skia on the CPU, frames piped straight into ffmpeg,
@@ -196,6 +197,7 @@ export async function main(argv) {
         "asr-model": { type: "string" },
         "no-asr": { type: "boolean" },
         "no-text-check": { type: "boolean" },
+        "no-canvas-check": { type: "boolean" },
         "no-video": { type: "boolean" },
         workers: { type: "string" },
         renderer: { type: "string" },
@@ -761,6 +763,8 @@ async function render(o, [briefPath]) {
         if (blockedPreview) return { ok: false, id, error: blockedPreview };
         const tmpPreview = path.join(proj.dir, "preview.mp4");
         if (!o.json) console.error(`previewing ${id} ${from}–${to}s (silent, no delivery checks)…`);
+        const canvasFailure = await filmCanvasCheck(proj, brief, o, id);
+        if (canvasFailure) return canvasFailure;
         let hf = null;
         if (!brief.engine && pickRenderer(brief, o).renderer === "native") {
           hf = await nativeRender(proj, tmpPreview, { ...o, quality: "draft" }, o._picked);
@@ -803,6 +807,8 @@ async function render(o, [briefPath]) {
       fs.rmSync(tmp, { force: true });
       if (!o.json)
         console.error(`rendering ${id} (${proj.total.toFixed(1)}s${proj.film ? `, ${usedRenderer(brief, o)} renderer` : ""})…`);
+      const canvasFailure = await filmCanvasCheck(proj, brief, o, id);
+      if (canvasFailure) return canvasFailure;
       let hf = null;
       if (proj.film && !brief.engine && pickRenderer(brief, o).renderer === "native") {
         hf = await nativeRender(proj, tmp, { ...o, quality, crf: o.release ? 10 : undefined }, o._picked);
@@ -1097,6 +1103,25 @@ function fallBack(o, why) {
   if (!o.json) console.error(`motion-use: motion-render cannot draw this film (${line.replace(/^motion-render:\s*/, "").trim()}); rendering in Chrome`);
   o._picked = { renderer: "chrome", reason: line };
   return null;
+}
+
+/** Validate every composition frame before any capture, independently of optional text gates. */
+async function filmCanvasCheck(proj, brief, o, id) {
+  if (!proj.film || o["no-canvas-check"] || (brief.engine && !brief.source)) return null;
+  const pick = pickRenderer(brief, o);
+  try {
+    let check;
+    try { check = await probeCanvas(proj.dir, { native: pick.renderer === "native" ? pick : null }); }
+    catch (error) {
+      if (pick.renderer !== "native" || !unsupportedContext(error.message)) throw error;
+      fallBack(o, error.message);
+      check = await probeCanvas(proj.dir);
+    }
+    if (check.error_count) return { ok: false, id, canvas_check: check, error: `strict Canvas check failed:\n${describeCanvas(check).join("\n")}` };
+    return null;
+  } catch (error) {
+    return { ok: false, id, canvas_check: { error: error.message }, error: `strict Canvas check did not run: ${error.message}` };
+  }
 }
 
 /** Text check of a film: the runtime's probe in motion-render's V8 or in Chrome, same runs and gates. */
@@ -1530,6 +1555,8 @@ async function still(o, [briefPath]) {
         ? [times[0]]
         : [Math.min(proj.total - 0.05, times[0] + 1), times[0]]
       : [];
+    const canvasFailure = await filmCanvasCheck(proj, brief, o, id);
+    if (canvasFailure) return canvasFailure;
     let hf = null;
     if (proj.film && !brief.engine && pickRenderer(brief, o).renderer === "native") {
       hf = await nativeStills({ bin: o._picked.bin, proj, times: [...times, ...probe], dir });
@@ -1613,6 +1640,8 @@ async function onionSkin(proj, id, out, { from, to, n }, o, brief) {
   const times = Array.from({ length: n }, (_, i) => from + ((end - from) * i) / (n - 1));
   const dir = path.join(out, "stills", `${id}-onion`);
   claimDir(dir);
+  const canvasFailure = await filmCanvasCheck(proj, brief, o, id);
+  if (canvasFailure) return canvasFailure;
   let hf = null;
   if (proj.film && !brief?.engine && pickRenderer(brief, o).renderer === "native") {
     hf = await nativeStills({ bin: o._picked.bin, proj, times, dir });

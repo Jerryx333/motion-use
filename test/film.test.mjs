@@ -277,3 +277,112 @@ test("verification decodes a real MP4 and reports missing sound without pretendi
   assert.equal(r.visual_review, "pending");
   assert.ok(fs.existsSync(r.sheet));
 });
+
+// The exact same wrapper source executes in the browser page and native V8.
+const strictSource = fs.readFileSync(new URL("../src/strict-canvas.js", import.meta.url), "utf8");
+const strictCheck = () => {
+  const sandbox = vm.createContext({});
+  vm.runInContext(strictSource, sandbox);
+  return sandbox.__motionUseStrictCanvas();
+};
+
+test("strict Canvas wrapper: exact frame windows, aggregation and legal overloads", () => {
+  const check = strictCheck();
+  const gradient = { addColorStop() {} };
+  const target = new Proxy({ globalAlpha: 1 }, { get: (o, k) => k in o ? o[k] : () => k.startsWith("create") ? gradient : undefined });
+  const c = check.wrap(target);
+  for (let frame = 0; frame < 90; frame++) {
+    const t = frame / 30;
+    check.at(frame, t);
+    if (t >= 2.03 && t < 2.06) c.scale(1.35);
+    if (t >= 2.13 && t < 2.2) { c.globalAlpha = NaN; c.globalAlpha = Infinity; }
+    c.setTransform({ a: 1, d: 1 }); c.setTransform(1, 0, 0, 1, 0, 0); c.setTransform();
+    c.roundRect(0, 0, 10, 10); c.fillText("ok", 0, 0);
+    c.drawImage({}, 0, 0); c.drawImage({}, 0, 0, 10, 10); c.drawImage({}, 0, 0, 10, 10, 0, 0, 10, 10);
+  }
+  const r = check.result();
+  assert.equal(r.error_count, 2);
+  assert.deepEqual(Array.from(r.errors, (e) => [e.name, e.kind, e.time, e.frame, e.frames]), [
+    ["scale", "arguments", 2.03, 61, 1], ["globalAlpha", "non-finite", 2.13, 64, 2],
+  ]);
+  const valid = strictCheck(), ctx = valid.wrap(target);
+  valid.at(0, 0); ctx.scale(1, 1); ctx.globalAlpha = 0.5;
+  const paint = ctx.createLinearGradient(0, 0, 1, 1);
+  paint.addColorStop(0, "red");
+  ctx.fillStyle = paint;
+  assert.equal(target.fillStyle, gradient);
+  assert.equal(valid.result().error_count, 0);
+});
+
+test("strict Canvas wrapper: numeric arguments, sequences, matrices, gradient stops and exceptions", () => {
+  const check = strictCheck();
+  const c = check.wrap(new Proxy({}, { get: () => () => ({ addColorStop() {} }) }));
+  check.at(5, 5 / 60);
+  c.arc(0, NaN, 1, 0, 1); c.setLineDash([1, Infinity]);
+  c.setTransform({ a: Infinity }); c.setTransform(1, 0);
+  c.createRadialGradient(0, 0, 1, 2, 2, 3).addColorStop(NaN, "red");
+  check.exception(new Error("author failure"));
+  const r = check.result();
+  assert.equal(r.error_count, 6);
+  assert.equal(r.errors.at(-1).message, "author failure");
+  assert.ok(r.errors.every((e) => e.frame === 5 && e.time === 0.08));
+  for (let i = 0; i < 20; i++) check.exception(new Error(`error ${i}`));
+  assert.equal(check.result().errors.length, 15);
+  assert.equal(check.result().error_count, 26);
+});
+
+test("strict Canvas full-film pass and CLI gate on native and Chrome", { timeout: 180000 }, async (t) => {
+  const { findRenderer } = await import("../src/native.mjs");
+  const { probeCanvas } = await import("../src/text-probe.mjs");
+  const { runHyperframes } = await import("../src/hf.mjs");
+  const { spawnSync } = await import("node:child_process");
+  const native = findRenderer();
+  const browser = await runHyperframes(["browser", "path"], {});
+  const chromePath = browser.out.trim().split("\n").pop();
+  const renderers = [];
+  if (native.bin) renderers.push(["native", native]);
+  if (browser.code === 0 && chromePath && fs.existsSync(chromePath)) renderers.push(["chrome", null]);
+  if (!renderers.length) return t.skip("no motion-render or Chrome for rendering");
+  const { dir, file } = project();
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
+  Object.assign(data, { duration: 3, fps: 30, music: "none", shots: [{ id: "only", start: 0, end: 3, purpose: "strict check", action: "short error windows" }] });
+  fs.writeFileSync(file, JSON.stringify(data));
+  fs.writeFileSync(path.join(dir, "composition", "draw.js"), `window.drawFrame = (c, t) => {
+    if (t >= 2.03 && t < 2.06) c.scale(1.35);
+    if (t >= 2.13 && t < 2.16) c.globalAlpha = NaN;
+  };`);
+  const proj = await buildFilm(checkFilm(file, {}).film, "zh", "landscape", path.join(dir, "out", ".build", "strict"));
+  for (const [renderer, picked] of renderers) {
+    await t.test(renderer, async () => {
+      const r = await probeCanvas(proj.dir, { native: picked });
+      assert.equal(r.samples, 90);
+      assert.equal(r.error_count, 2);
+      assert.deepEqual(r.errors.map((e) => [e.name, e.time, e.frame, e.frames]), [["scale", 2.03, 61, 1], ["globalAlpha", 2.13, 64, 1]]);
+      for (const [command, extra] of [["still", ["--at", "0"]], ["render", []], ["render", ["--from", "0", "--to", "1"]]]) {
+        const cli = spawnSync(process.execPath, [path.resolve("bin/motion-use.mjs"), command, dir, "--allow-code", "--json", "--no-text-check", "--renderer", renderer, ...extra], { encoding: "utf8", env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1" } });
+        assert.equal(cli.status, 1, cli.stderr + cli.stdout);
+        const json = JSON.parse(cli.stdout);
+        assert.equal(json.outputs[0].canvas_check.error_count, 2, cli.stdout);
+        assert.match(json.outputs[0].error, /2\.03s, frame 61/);
+      }
+      for (const [command, extra] of [["still", ["--at", "0"]], ["render", ["--from", "0", "--to", "1"]]]) {
+        const cli = spawnSync(process.execPath, [path.resolve("bin/motion-use.mjs"), command, dir, "--allow-code", "--json", "--no-text-check", "--no-canvas-check", "--renderer", renderer, ...extra], { encoding: "utf8", env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1" } });
+        assert.equal(cli.status, 0, cli.stderr + cli.stdout);
+        const json = JSON.parse(cli.stdout);
+        assert.equal(json.outputs[0].ok, true, cli.stdout);
+        assert.equal(json.outputs[0].canvas_check, undefined);
+      }
+      const source = path.join(proj.dir, "composition", "draw.js");
+      const bad = fs.readFileSync(source, "utf8");
+      fs.writeFileSync(source, 'window.drawFrame = (c) => { c.scale(1, 1); c.globalAlpha = 0.5; c.fillRect(0, 0, 10, 10); };');
+      try {
+        assert.equal((await probeCanvas(proj.dir, { native: picked })).error_count, 0);
+        fs.writeFileSync(source, 'window.drawFrame = () => { throw new Error("failed pose"); };');
+        const thrown = await probeCanvas(proj.dir, { native: picked });
+        assert.equal(thrown.error_count, 1);
+        assert.deepEqual(thrown.errors.map((e) => [e.name, e.kind, e.message, e.frame, e.frames]), [["drawFrame", "exception", "failed pose", 0, 90]]);
+      }
+      finally { fs.writeFileSync(source, bad); }
+    });
+  }
+});

@@ -950,13 +950,14 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     path.join(outDir, "runtime.js"),
     fs.readFileSync(path.join(ROOT, "src", "film-runtime.js")),
   );
+  fs.copyFileSync(path.join(ROOT, "src", "strict-canvas.js"), path.join(outDir, "strict-canvas.js"));
   fs.copyFileSync(
     path.join(ROOT, "src", "film-kit.js"),
     path.join(outDir, "kit.js"),
   );
   fs.writeFileSync(
     path.join(outDir, "index.html"),
-    `<!doctype html><html lang="${esc(lang)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'${loads ? " 'wasm-unsafe-eval'" : ""}; style-src 'self' 'unsafe-inline'; connect-src ${loads ? "'self' data: blob:" : "'none'"}; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>${esc(film.name)}</title><style>@font-face{font-family:Film Sans;src:url(assets/fonts/sans.woff2);font-weight:100 900}@font-face{font-family:Film Mono;src:url(assets/fonts/mono.woff2);font-weight:100 800}html,body{margin:0;background:${overlay ? "transparent" : "#151515"}}#root{width:100%;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style></head><body><div id="root" data-composition-id="main" data-no-timeline data-width="${w}" data-height="${h}" data-duration="${range ? range.to - range.from : film.duration}"><canvas id="film-canvas" width="${w}" height="${h}"></canvas>${audio.join("")}</div><script id="film-config" type="application/json">${JSON.stringify(config).replace(/</g, "\\u003c")}</script>${scripts}<script src="kit.js"></script><script src="composition/draw.js"></script><script src="runtime.js"></script></body></html>`,
+    `<!doctype html><html lang="${esc(lang)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'${loads ? " 'wasm-unsafe-eval'" : ""}; style-src 'self' 'unsafe-inline'; connect-src ${loads ? "'self' data: blob:" : "'none'"}; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>${esc(film.name)}</title><style>@font-face{font-family:Film Sans;src:url(assets/fonts/sans.woff2);font-weight:100 900}@font-face{font-family:Film Mono;src:url(assets/fonts/mono.woff2);font-weight:100 800}html,body{margin:0;background:${overlay ? "transparent" : "#151515"}}#root{width:100%;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style></head><body><div id="root" data-composition-id="main" data-no-timeline data-width="${w}" data-height="${h}" data-duration="${range ? range.to - range.from : film.duration}"><canvas id="film-canvas" width="${w}" height="${h}"></canvas>${audio.join("")}</div><script id="film-config" type="application/json">${JSON.stringify(config).replace(/</g, "\\u003c")}</script>${scripts}<script src="kit.js"></script><script src="composition/draw.js"></script><script src="strict-canvas.js"></script><script src="runtime.js"></script></body></html>`,
   );
   return {
     range,

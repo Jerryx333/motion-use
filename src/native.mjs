@@ -222,15 +222,18 @@ export async function nativeStills({ bin, proj, times, dir }) {
 }
 
 /** motion-use's text probe run in motion-render's V8 over `times`; same result shape as in Chrome. */
-export async function nativeProbe({ bin, projDir, times, work }) {
+export async function nativeProbe({ bin, projDir, times, work, canvasCheck = false }) {
   fs.mkdirSync(work, { recursive: true });
   const file = path.join(work, `probe-${process.pid}-${Date.now()}.json`);
   fs.writeFileSync(file, JSON.stringify(times));
+  const page = canvasCheck ? path.join(projDir, `.canvas-check-${process.pid}.html`) : path.join(projDir, "index.html");
+  if (canvasCheck) fs.writeFileSync(page, fs.readFileSync(path.join(projDir, "index.html"), "utf8").replace('<script src="runtime.js">', '<script>window.__motionUseCanvasCheckOnly = true;</script><script src="runtime.js">'));
   try {
-    const r = await run(bin, ["probe", path.join(projDir, "index.html"), "--times", file]);
+    const r = await run(bin, ["probe", page, "--times", file]);
     if (r.code !== 0) throw new Error(r.out.trim().split("\n").slice(-3).join(" ") || `motion-render exited with ${r.code}`);
     return JSON.parse(r.stdout.trim().split("\n").at(-1));
   } finally {
     fs.rmSync(file, { force: true });
+    if (canvasCheck) fs.rmSync(page, { force: true });
   }
 }

@@ -195,6 +195,8 @@
   // fillText/strokeText box in output pixels, so text running off the frame is found by
   // measurement instead of by eye. Never called during capture.
   window.__motionUseTextProbe = async (times) => {
+    // A negative sentinel reuses the probe command supported by installed native binaries.
+    if (times.length === 1 && times[0] === -1) return window.__motionUseCanvasProbe();
     await window.__hf.buildReady["motion-use-film"];
     const probe = document.createElement("canvas");
     probe.width = canvas.width;
@@ -337,6 +339,28 @@
     }
     return { width: canvas.width, height: canvas.height, safe: view.safe, vertical: view.vertical, fps: film.fps || 30, samples: out };
   };
+  // The strict pass uses output-frame times for the whole film, including range previews.
+  window.__motionUseCanvasProbe = async () => {
+    await window.__hf.buildReady["motion-use-film"];
+    const probe = document.createElement("canvas");
+    probe.width = canvas.width;
+    probe.height = canvas.height;
+    const pc = probe.getContext("2d");
+    const check = globalThis.__motionUseStrictCanvas(), checked = check.wrap(pc);
+    const count = Math.round(film.duration * film.fps);
+    for (let frame = 0; frame < count; frame++) {
+      const t = frame / film.fps;
+      check.at(frame, t);
+      await loadFrames(missingFrames(t - (film.offset || 0)));
+      pc.resetTransform();
+      pc.beginPath();
+      pc.save();
+      try { window.drawFrame(checked, t, film, view, motion); }
+      catch (error) { check.exception(error); }
+      finally { pc.restore(); }
+    }
+    return { ...check.result(), samples: count };
+  };
   window.__hf = window.__hf || {};
   window.__hf.buildReady = window.__hf.buildReady || {};
   window.__hf.buildReady["motion-use-film"] = (async () => {
@@ -365,6 +389,6 @@
       await window.setupFilm(film, view, motion);
     ready = true;
     await loadFrames(missingFrames(requested - (film.offset || 0)));
-    renderAt(requested - (film.offset || 0));
+    if (!window.__motionUseCanvasCheckOnly) renderAt(requested - (film.offset || 0));
   })();
 })();

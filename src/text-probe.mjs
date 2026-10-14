@@ -292,7 +292,10 @@ function serve(dir) {
       res.end(data);
     });
   });
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server));
+  });
 }
 
 async function browser() {
@@ -304,6 +307,30 @@ async function browser() {
   if (r.code !== 0 || !executablePath || !fs.existsSync(executablePath))
     throw new Error("no Chrome found (motion-use doctor --install-browser)");
   return puppeteer.launch({ executablePath, headless: true, args: ["--no-sandbox", "--disable-gpu", "--hide-scrollbars"] });
+}
+
+/** Strict Canvas errors are hard failures; an unavailable probe cannot pass validation. */
+export async function probeCanvas(projDir, { native = null } = {}) {
+  let server, b;
+  try {
+    if (native) {
+      const { nativeProbe } = await import("./native.mjs");
+      return await nativeProbe({ bin: native.bin, projDir, times: [-1], work: path.join(projDir, ".probe"), canvasCheck: true });
+    }
+    server = await serve(projDir);
+    b = await browser();
+    const page = await b.newPage();
+    await page.evaluateOnNewDocument(() => { window.__motionUseCanvasCheckOnly = true; });
+    await page.goto(`http://127.0.0.1:${server.address().port}/index.html`, { waitUntil: "load", timeout: 60000 });
+    return await page.evaluate(() => window.__motionUseCanvasProbe());
+  } finally {
+    await b?.close().catch(() => {});
+    server?.close();
+  }
+}
+
+export function describeCanvas(check) {
+  return check.errors.map((e) => `${e.name}: ${e.kind}: ${e.message} at ${e.time.toFixed(2)}s, frame ${e.frame} (0-based), ${e.frames} frame(s)`);
 }
 
 /**
