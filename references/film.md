@@ -142,6 +142,11 @@ Add `narration` to each narrated shot as a language map, e.g. `{"zh":"发一条�
 
 `motion-use voiceover <project>` supports films and caches one audio file per language/shot. `render` automatically generates missing or outdated narration before frame capture. Generation uses the voice provider's network service; the frame renderer stays local. Imported `audio` tracks with `role: "voiceover"` take precedence. Optional `lang` selects one language; omit it for an intentionally shared track. User recordings are preserved.
 
+Before locking narration or rendering, audition 3–5 voices on the same, most emotional line, then choose the voice and rate.
+In a temporary project copy, use a fresh `voiceover.dir`, keep `narration` on one shot only, omit root `narration` and imported voiceover tracks, and change `voiceover.voices.zh` between runs of `motion-use voiceover <project> --lang zh`.
+Save each candidate clip before the next run replaces it; tune `voiceover.rate` after choosing the voice, then apply both settings to the full project.
+Listen by ear: emphatic lines can sound hoarse or crack; ASR checks words, not vocal quality. Confirm authorization for preview online TTS voices before public release.
+
 Each shot's spoken window starts 80 ms after its start and ends 80 ms before its end. Whole-film narration has 100 ms at each edge. Audio that does not fit fails: shorten the script or retime the authored shots and drawing; words are never trimmed to fit. `voiceover:false` opts into a deliberately unnarrated film, not an automatic fallback after a provider failure.
 
 Final delivery verifies that the voice-only reference actually appears in the MP4's mix, using per-window waveform correlation and non-silence checks. This checks presence and alignment of the expected signal, not speech recognition or listening quality. A music-only MP4 cannot pass required narration, and a failed candidate never replaces the last delivered video. Generated audio and voice manifests are excluded from release packages. Narrated film filenames end in `-VO.mp4`, making them distinct from older unnarrated exports.

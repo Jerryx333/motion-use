@@ -119,6 +119,11 @@ Narration can be recorded or generated. Either way it ends up at `<voiceover.dir
   - Default voices: `zh-CN-YunxiNeural` for `zh`, `en-US-AndrewMultilingualNeural` for `en`; set `voiceover.voices` for other languages or other voices.
   - Generated files are recorded in `<dir>/.motion-use-voiceover.json`. Running again regenerates only lines whose text, voice, rate or engine changed. A file motion-use did not generate (your own recording) is never replaced unless you pass `--force`.
 
+Before locking narration or rendering, audition 3–5 voices on the same, most emotional line, then choose the voice and rate.
+In a temporary brief copy, keep `narration` on one scene only, use a fresh `voiceover.dir`, and change `voiceover.voices.zh` between runs of `motion-use voiceover <brief> --lang zh`.
+Save each candidate clip before the next run replaces it; tune `voiceover.rate` after choosing the voice, then apply both settings to the full brief.
+Listen by ear: emphatic lines can sound hoarse or crack; ASR checks words, not vocal quality. Confirm authorization for preview online TTS voices before public release.
+
 ## Timing
 
 - Scenes cross-fade over 0.4 s.

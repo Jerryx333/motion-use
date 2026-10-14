@@ -11,7 +11,12 @@ Pick the structure before writing scenes. Two products told with the same five s
 
 ## problem-solution
 
-Open on the frustration, in the user's words, as `kinetic` lines. Then name the product as the answer (`title`, `layout: "left"`, `transition: "wipe"`), show it working (a `video` of the real thing when you have one; `terminal` otherwise), give two or three reasons (`features`, `layout: "grid"`), and end on the install line.
+For developers, open on the frustration, in the user's words, as `kinetic` lines. Then name the product as the answer (`title`, `layout: "left"`, `transition: "wipe"`), show it working (a `video` of the real thing when you have one; `terminal` otherwise), give two or three reasons (`features`, `layout: "grid"`), and end on the install line.
+
+For non-developers, or feedback that it is "too technical", keep terminals, commands, filenames and English jargon out of the story.
+Use one everyday metaphor throughout: the lead AI as a project manager and models as team members, or plugs sharing one socket.
+Explain benefits rather than mechanisms; give each shot one benefit-led caption in the audience's language.
+Keep any install details or link on the closing card only.
 
 Narration: the first line is the problem, never the product name. Keep the demo narration about what the viewer sees happen.
 
@@ -36,6 +41,10 @@ Narration: one idea per scene; say why as well as what.
 ## Rules for every story
 
 - Facts come from the product's README, `--help` and real output. Never invent features, numbers or install lines.
+- Record each claim's source and date read in `DIRECTOR.md`; public releases use only claims supported by public sources. Avoid unverified numbers and absolute claims.
+- Illustrations must not pass for recordings: keep a small "illustrative" label visible throughout every illustrative animation, not just at the opening.
+- Omit third-party vendor names and logos; use generic terms such as "a coding model" or "a local model".
+- For capabilities the user must connect or configure, say "connect your own …", never imply they come included.
 - Prefer real footage (`video`, screenshots with `highlights`) over mock-ups wherever the product has something to show.
 - Scene 1 is the cover: make it readable at thumbnail size.
 - Vary `transition` and `layout` with intent (a `cut` for urgency, a `wipe` for a reveal), not on every scene.

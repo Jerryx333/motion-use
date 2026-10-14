@@ -2,6 +2,8 @@
 
 How to plan, pace, check and review an authored film. The failure modes, pulse rhythm, storyboard rules, delivery gates and review protocol are adapted from [huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion) (MIT, alchaincyf) and re-expressed for `film.json` and `composition/draw.js`. The drawing API is in [film.md](film.md); explainer looks are in [grammars.md](grammars.md).
 
+For product promos, choose the audience's technical level first; [stories.md](stories.md#problem-solution) gives the developer and everyday-metaphor branches.
+
 ## Before code: lock the look, then plan objects and verbs
 
 Write `look` before the first shot. One style and one palette hold to the last frame; changing scenes is fine, changing style is a collage.
