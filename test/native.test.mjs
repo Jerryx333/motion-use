@@ -99,6 +99,34 @@ test("mix envelope: absolute points, held at both ends, replacing the clip volum
   ]);
 });
 
+test("ffmpeg keeps duck false music at its volume under voiceover, with its final fade", async () => {
+  const dir = soundFilm();
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=4", path.join(dir, "song.wav")]);
+  const file = path.join(dir, "film.json");
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
+  const samples = [];
+  for (const duck of [undefined, false]) {
+    data.music = { file: "song.wav", volume: 0.6, duck };
+    fs.writeFileSync(file, JSON.stringify(data));
+    const { film } = checkFilm(dir);
+    const proj = await buildFilm(film, "en", "square", path.join(dir, "out", "build"));
+    const music = proj.mix[0];
+    assert.equal(Boolean(music.automation), duck !== false);
+    const out = path.join(dir, `music-${duck}.wav`);
+    // Isolate the music to measure its gain during the authored voice window.
+    mixAudio([music], proj.total, out);
+    samples.push(pcm(out));
+  }
+  const rms = (a, from, to) => {
+    const window = a.subarray(Math.round(from * 48000), Math.round(to * 48000));
+    return Math.sqrt(window.reduce((sum, v) => sum + v * v, 0) / window.length);
+  };
+  const [ducked, constant] = samples;
+  assert.ok(Math.abs(rms(constant, 1.3, 1.8) / rms(ducked, 1.3, 1.8) - 4) < 0.01);
+  assert.ok(Math.abs(rms(constant, 1.3, 1.8) / rms(constant, 0.3, 0.8) - 1) < 0.01);
+  assert.ok(rms(constant, 3.9, 4) < rms(constant, 3.3, 3.6) * 0.3);
+});
+
 test("without motion-render a film renders in Chrome, and says so in the result", { timeout: 300000 }, async (t) => {
   if (!(await chrome())) return t.skip("no Chrome for rendering");
   const dir = soundFilm({ duration: 3 });

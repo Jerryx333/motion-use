@@ -284,7 +284,7 @@ export function validateFilm(
     if (!music || typeof music !== "object" || Array.isArray(music))
       error(
         "$.music",
-        '"builtin", "none", {builtin: mood, volume, hits} or {file, volume, bpm, from}',
+        '"builtin", "none", {builtin: mood, volume, hits, duck} or {file, volume, bpm, from, duck}',
       );
     else if (music.builtin !== undefined) {
       if (music.file !== undefined)
@@ -318,6 +318,9 @@ export function validateFilm(
           error("$.music.file", e.message);
         }
     }
+    if (music && typeof music === "object" && !Array.isArray(music) &&
+        music.duck !== undefined && typeof music.duck !== "boolean")
+      error("$.music.duck", "a boolean (default true: duck music under voiceover)");
   }
   const bpm =
     data.bpm ??
@@ -877,7 +880,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     // Voiceover windows carve the music, with short ramps at both edges.
     const points = [{ t: 0, v: volume }];
     const voices = selectedTracks
-      .filter((a) => a.role === "voiceover")
+      .filter((a) => a.role === "voiceover" && film.music.duck !== false)
       .sort((a, b) => a.start - b.start);
     const windows = [];
     for (const a of voices) {

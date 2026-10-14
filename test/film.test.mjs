@@ -74,6 +74,49 @@ test("bundled effects are allowlisted and cannot resolve arbitrary package paths
   assert.deepEqual(validateFilm(data,dir).errors,[]);
   data.audio[0].effect="../../secret";assert.ok(validateFilm(data,dir).errors.some(e=>e.path==="$.audio[0].effect"));
 });
+test("music duck accepts only booleans for built-in and imported music", () => {
+  const { dir, data } = project();
+  fs.writeFileSync(path.join(dir, "song.wav"), "fixture");
+  for (const source of [{ builtin: "pulse" }, { file: "song.wav" }]) {
+    for (const duck of [undefined, true, false]) {
+      data.music = { ...source, duck };
+      assert.deepEqual(validateFilm(data, dir).errors, []);
+    }
+    for (const duck of ["no", null, 0, [], {}]) {
+      data.music = { ...source, duck };
+      assert.ok(validateFilm(data, dir).errors.some((e) =>
+        e.path === "$.music.duck" && e.message.includes("boolean"),
+      ));
+    }
+  }
+});
+test("music ducks by default; duck false removes browser and native automation", async () => {
+  const { dir, data } = project();
+  fs.copyFileSync(new URL("../assets/sfx/click.wav", import.meta.url), path.join(dir, "song.wav"));
+  data.audio = [{ effect: "click", role: "voiceover", start: 1 }];
+  for (const source of [{ builtin: "pulse", hits: [4.6] }, { file: "song.wav", bpm: 120 }]) {
+    for (const duck of [undefined, false]) {
+      data.music = { ...source, volume: 0.6, duck };
+      const { film, errors } = validateFilm(data, dir);
+      assert.deepEqual(errors, []);
+      const build = await buildFilm(film, "zh", "landscape", path.join(dir, "out", "build"));
+      const music = build.mix[0];
+      const html = fs.readFileSync(path.join(build.dir, "index.html"), "utf8");
+      const tag = html.match(/<audio id="film-music"[^>]*>/)[0];
+      assert.equal(music.volume, 0.6);
+      assert.equal(music.fadeOut, 0.3);
+      assert.match(tag, /data-volume="0.6"/);
+      assert.match(tag, /data-fade-out="0.3"/);
+      if (duck === false) {
+        assert.equal(music.automation, null);
+        assert.doesNotMatch(tag, /data-automation/);
+      } else {
+        assert.ok(music.automation.some((p) => p.v === 0.15));
+        assert.match(tag, /data-automation=/);
+      }
+    }
+  }
+});
 test("only explicitly named project assets are copied; escaping symlinks and clocks are rejected", async () => {
   const { dir, data } = project(),
     outside = temp();
