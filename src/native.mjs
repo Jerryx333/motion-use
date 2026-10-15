@@ -126,7 +126,7 @@ function collect(child, cap = 8000) {
  * into `file`: motion-render's raw RGBA goes through a pipe into one ffmpeg with the browser
  * path's encoder settings. Resolves { code, out, ms } like runHyperframes.
  */
-export function streamRender({ bin, proj, file, audio = null, quality = "looks", crf, workers, frames }) {
+export function streamRender({ bin, proj, file, audio = null, quality = "looks", crf, workers, frames, onProgress }) {
   const fps = proj.fps,
     { w, h } = proj.fmt,
     count = frames ?? Math.round(proj.total * fps);
@@ -137,7 +137,7 @@ export function streamRender({ bin, proj, file, audio = null, quality = "looks",
       stdio: ["ignore", "pipe", "pipe"],
     });
     const ffArgs = [
-      "-v", "error", "-y",
+      "-v", "error", "-y", ...(onProgress ? ["-progress", "pipe:2", "-stats_period", "1"] : []),
       "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w}x${h}`, "-framerate", String(fps), "-i", "pipe:0",
       ...(audio ? ["-i", audio] : []),
       "-map", "0:v:0", ...(audio ? ["-map", "1:a:0"] : []),
@@ -148,6 +148,17 @@ export function streamRender({ bin, proj, file, audio = null, quality = "looks",
     ];
     // ffmpeg reads motion-render's stdout directly; node never touches the frames.
     const ff = spawn("ffmpeg", ffArgs, { stdio: [mr.stdout, "ignore", "pipe"] });
+    if (onProgress) {
+      let pending = "";
+      ff.stderr.on("data", (chunk) => {
+        pending += chunk;
+        const lines = pending.split("\n"); pending = lines.pop();
+        for (const line of lines) {
+          const match = /^frame=(\d+)/.exec(line);
+          if (match) onProgress(Math.min(count, Number(match[1])), count);
+        }
+      });
+    }
     mr.stdout.destroy();
     pair(mr, ff, (r) => resolve({ ...r, ms: performance.now() - t0 }));
   });
@@ -215,7 +226,7 @@ const stillName = (i, t) => `frame-${String(i).padStart(2, "0")}-at-${+t.toFixed
 export async function nativeStills({ bin, proj, times, dir }) {
   const tmp = path.join(dir, ".native");
   fs.rmSync(tmp, { recursive: true, force: true });
-  const r = await run(bin, ["render", path.join(proj.dir, "index.html"), "--at", times.map((t) => t.toFixed(4)).join(","), "--out", tmp, "--format", "png", "--workers", "1"]);
+  const r = await run(bin, ["render", path.join(proj.dir, "index.html"), "--at", times.map(String).join(","), "--out", tmp, "--format", "png", "--workers", "1"]);
   if (r.code !== 0) {
     fs.rmSync(tmp, { recursive: true, force: true });
     return { code: 1, out: r.out };

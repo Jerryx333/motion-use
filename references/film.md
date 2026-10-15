@@ -317,3 +317,33 @@ The text probe decodes native output as a UTF-8 stream and deduplicates the same
 Motion reports retain the grayscale fast_ratio measurement and add colour-region events (at least 5% of a 160 px analysis frame changes a channel by at least 24). Recolouring a region can therefore count as an event even when its luminance barely changes. Low fast_ratio with frequent region events gets a specific note; a red delivery light is not silently waived. Review the cut and record a deliberate allow-static reason when its measured motion is appropriate to the subject.
 
 Tone-bearing transcript text is still ASR's spelling, not a measurement of spoken tone; names may produce more conservative flags. After actually listening, a reviewer can record an exact exception under `narrationReviews["zh/shot-id"]`: `{sha256, script, heard, reason}`. Use the check report's audio_sha256 and exact script/heard strings. It applies only while all three still match, preserves comparison_flagged and the underlying changes, and records reviewed.reason. Changed audio, script or transcript invalidates it automatically. This is a review record, not an authentication mechanism; never fabricate one to pass a gate.
+
+### Frame boundaries and concurrent jobs
+
+Shot windows are half-open: `[start, end)`. Author boundaries as integer frames
+(e.g. `4310 / 60`). `view.frame` is the integer output frame on the original film
+timeline, including range offsets; `view.sampleTime` is the current blur sample's
+seconds. `M.activeShot(t)` selects a shot using frame-rounded start/end boundaries.
+Motion-blur samples stop at the active shot's start, so its first frame cannot
+contain a held frame from the previous shot. Keep using sample time `t` for smooth
+motion within the shot. Native stills pass full-precision timestamps.
+
+`still` and `render` acquire `<out>/.motion-use.lock` before modifying build files.
+Use a separate `--out` for simultaneous jobs. A crash leaves the PID, host and run
+ID for inspection; locks are never stolen automatically. Only remove an abandoned
+lock after verifying its owner has stopped (including any renderer/encoder children).
+
+`render --json --progress json` writes one final result to stdout and newline-delimited
+progress events to stderr (`--progress text` is human-readable; default `none`).
+Events include phase, start/finish/error, elapsed seconds and language/format when
+available. Native capture/encoding reports completed/total frames from ffmpeg;
+Chrome and external engines currently report phases. Decode, motion analysis and
+release encoding have separate phases. No ETA is guessed; phase events describe
+operations, not an assurance that a process is making progress between events.
+
+`retime` requires a matching narration manifest entry for every narration-timed
+clip: current script, configured voice/rate/engine and audio SHA-256. Untracked
+recordings remain usable as imported audio with explicit timing; they cannot be
+automatically retimed without provenance. Generation errors preserve prior audio,
+mark it stale and include errors in the JSON result. HTTP 429 receives two retries
+with 1s/2s backoff; service URLs are redacted from errors.

@@ -153,3 +153,10 @@ motion-use concat parts.json --out ./joined --release
 Studies use illustrative objects and data. Handoff packages contain SRT, separate source audio, shot timing, explicitly declared inputs and provenance hashes, not a native editor draft or a rendered clean plate. Code-driven motion stays baked; no-captions suppresses M.captions, not custom drawing or text inside footage. Variants have distinct filenames and replayable snapshot settings. Drafts remain under out/preview even when delivery measurements fail.
 
 The [film contract](references/film.md) also covers imported subtitles/keyword cues, optional measured Azure word boundaries, narration-driven retiming, custom licensed fonts, compiled GeoJSON/TopoJSON maps, camera anchors, updating legends, original documentary SFX, joined-master verification and remote-render synchronization.
+
+Long renders can report phases on stderr without changing the final JSON result:
+`motion-use render <dir> --allow-code --json --progress text` (or `--progress json`
+for NDJSON events). Overlapping still/render jobs sharing `--out` now fail early.
+`motion-use <command> --help` displays CLI usage. See
+[frame boundaries and concurrent jobs](references/film.md#frame-boundaries-and-concurrent-jobs)
+for exact cut timing, lock recovery and narration freshness requirements.
