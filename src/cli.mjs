@@ -1516,7 +1516,7 @@ async function voiceover(o, [briefPath, ...rest]) {
     return ok ? 0 : 1;
   }
   // The folder may not exist yet on a first run: create it so validation passes.
-  const { data, dir } = readBrief(briefPath ?? "brief.json");
+  const { data, dir } = readBrief(resolveProject(briefPath));
   if (typeof data?.voiceover?.dir === "string")
     fs.mkdirSync(path.resolve(dir, data.voiceover.dir), { recursive: true });
   const { brief, errors, warnings } = validateBrief(data, dir);

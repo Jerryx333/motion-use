@@ -1,3 +1,4 @@
+import { projectInput } from "./projects.mjs";
 import { groupCaptions } from "./caption-plan.mjs";
 import { anchoredTime, sequenceFiles, buildFootage } from "./footage.mjs";
 // A film owns its choreography. The CLI owns assets, exact time, packaging and delivery.
@@ -35,7 +36,7 @@ const inside = (base, file) => {
 
 export function resolveProject(input) {
   if (input) {
-    const p = path.resolve(input);
+    const p = projectInput(input);
     if (fs.existsSync(p) && fs.statSync(p).isDirectory())
       return path.join(
         p,

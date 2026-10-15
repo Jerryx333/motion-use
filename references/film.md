@@ -355,6 +355,7 @@ with 1s/2s backoff; service URLs are redacted from errors.
 CLI and renderer. `init ./demo`, `init .` and absolute paths remain explicit paths.
 Without an argument, init uses `film` (or `--name`). New authored projects include
 SCRIPT.md and reviews/ for the script-first production process in production.md.
+Bare names such as `validate demo` or `render demo` resolve in the project root when no local project/path with that name exists; `demo/film.json` and `demo/brief.json` work too. Existing local paths take priority; `./demo` is always explicit.
 `motion-use list --json` lists direct child projects with name, duration and the
 standard `out/release/release-manifest.json`'s master path/time. Missing masters
 are marked; custom output folders and projects outside this root are not scanned.

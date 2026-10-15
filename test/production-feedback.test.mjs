@@ -216,6 +216,29 @@ test("#69 bare names initialize under the configurable project root; list report
   const r = cli(["init", "demo", "--lang", "en", "--json"], env);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).film, path.join(root, "demo", "film.json"));
+  for (const input of ["demo", "demo/film.json"]) {
+    const validated = cli(["validate", input, "--json"], env);
+    assert.equal(validated.status, 0, validated.stderr + validated.stdout);
+    assert.equal(
+      JSON.parse(validated.stdout).brief,
+      path.join(root, "demo", "film.json"),
+    );
+  }
+  const local = temp();
+  initFilm({ lang: "en" }, path.join(local, "demo"));
+  const localRead = spawnSync(
+    process.execPath,
+    [path.resolve("bin/motion-use.mjs"), "validate", "demo", "--json"],
+    {
+      cwd: local,
+      encoding: "utf8",
+      env: { ...process.env, ...env, MOTION_USE_NO_UPDATE_CHECK: "1" },
+    },
+  );
+  assert.equal(
+    fs.realpathSync(JSON.parse(localRead.stdout).brief),
+    fs.realpathSync(path.join(local, "demo", "film.json")),
+  );
   const release = path.join(root, "demo", "out", "release");
   fs.mkdirSync(release, { recursive: true });
   fs.writeFileSync(

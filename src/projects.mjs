@@ -73,3 +73,15 @@ export function listProjects(env = process.env) {
   }
   return { root, projects };
 }
+
+// Bare names refer to saved projects only when no local path/prefix exists.
+// An explicit ./path always remains local, including when it is missing.
+export function projectInput(input, env = process.env) {
+  const local = path.resolve(input);
+  const prefix = input.split(/[\\/]/)[0];
+  if (fs.existsSync(local) || fs.existsSync(path.resolve(prefix))) return local;
+  if (!/^[a-z0-9][a-z0-9-]{0,39}(?:[\\/](?:film|brief)\.json)?$/.test(input))
+    return local;
+  const stored = path.join(projectRoot(env), input);
+  return fs.existsSync(stored) ? stored : local;
+}
