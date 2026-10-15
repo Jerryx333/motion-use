@@ -195,3 +195,21 @@ Recognition checks characters, not tones: “有数” read as shǔ can still pa
 ## Existing briefs
 
 `brief.json` and `--style` / `--story` keep their previous scene behavior. Use `--mode template` explicitly when creating information-card videos. `--allow-code` authorizes film code; `--allow-custom-html` remains the separate opt-in for template HTML scenes. Validation never executes the authored script. Static lint checks are not a security boundary for arbitrary code.
+
+
+## Preview before rendering
+
+```bash
+motion-use preview <dir|film.json> --lang en --format vertical
+motion-use preview examples/kinetic --no-open --port 0
+```
+
+`preview` opens a local browser review for a film's composition: inspect picture, pacing and narration before making a video. It builds HTML and a single premixed WAV with the same `proj.mix` description and ffmpeg mixer as formal rendering (music, effects, narration, volumes, ducking and fades). It does not apply delivery loudness normalization. Existing narration recordings are used; preview never generates speech or accesses a voice service. Generate missing narration with `voiceover` first.
+
+The server listens only on `127.0.0.1` and prints its URL. The default port (or `--port 0`) is random; `--port N` fixes it. macOS uses `open`, Linux uses `xdg-open`; `--no-open` only prints the URL. Stop with Ctrl+C. Select one language and format at a time; the default is the first declared language and format.
+
+Play/pause with Space, drag the timeline, step one film frame with the arrow keys, or click a shot to jump to its start. The storyboard lists each shot's id, time window, action, text and narration in the selected language. A premixed audio element supplies the clock; silent films use `requestAnimationFrame`. Portrait formats include an optional platform occlusion overlay: it tints the area outside `safeBox` from `src/film.mjs`, matching `view.safe` and `still --guides` (6–86% across, 10–76% down). These are approximate feed UI margins, not platform specifications.
+
+Refresh after editing: requests for the review page or built index check film.json, the composition directory, declared assets/libraries and audio source mtimes. Changed inputs rebuild under `out/.build/preview-<name>-<lang>-<format>/`; only changes to the audio mix or its sources remix the WAV. No MP4 or finished film frame capture is made. `videos` footage is supported: normal `buildFilm` processing extracts source JPEG frames for exact seeking. `brief.json` and external command engines are rejected; command engines require rendering film frames, which preview does not perform.
+
+Preview is for human review before rendering, not delivery verification, and does not replace `render`, its technical checks or review of the delivered MP4. Only preview authored code you wrote or trust: the composition runs in your browser. Do not run concurrent build commands against the same preview directory.

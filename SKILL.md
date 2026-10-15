@@ -43,6 +43,7 @@ motion-use validate <dir>                                   # plan warnings, gly
 motion-use still <dir> --allow-code --shot <id>             # three frames of one shot
 motion-use still <dir> --allow-code --beats 4               # one frame per bar; warns if drawing keeps state
 motion-use still <dir> --allow-code --onion 4.4-5.2         # a move's frames in one PNG: even ghosts = linear, bunched = eased
+motion-use preview <dir> --lang en --format vertical       # browser review of picture, pacing and narration; no MP4
 motion-use render <dir> --allow-code --from 3 --to 7        # silent draft of a range
 motion-use render <dir> --allow-code --quality draft --json # compact summary
 ```

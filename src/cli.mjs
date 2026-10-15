@@ -54,6 +54,7 @@ import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry,
 import { compositeArgs, compositeStill, frameName, frameRange, runEngine, splitFrames, startStreamingEngine } from "./engine.mjs";
 import { chooseRenderer, findRenderer, nativeStills, nativeWorkers, pair, streamRender, unsupportedContext } from "./native.mjs";
 import { mixAudio } from "./mix.mjs";
+import { startPreview, openPreview } from "./preview.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(
@@ -74,6 +75,8 @@ Usage: motion-use <command> [options]
   still [brief]       Render keyframes as PNGs plus a contact sheet (--at 1.5,4 for exact seconds, --shot id,
                       --beats 1 one frame per beat (4: per bar), --guides tints what platform UI covers in portrait feeds,
                       --onion 1.2-2 stacks 8 evenly spaced frames of that range into one PNG to judge spacing)
+  preview <project>   Review a film in the browser before rendering (no MP4 or frame capture)
+                      --lang L --format F --port N (default: random) --no-open
   render [brief]      Render MP4s for every language and format in the brief
                       (--from 6 --to 10: a quick silent preview of that range of a film)
                       --release: high quality, then platform masters + release-manifest.json in out/release/
@@ -140,6 +143,7 @@ export async function main(argv) {
     validate,
     voiceover,
     still,
+    preview,
     render,
     verify,
     breakdown,
@@ -207,6 +211,8 @@ export async function main(argv) {
         "no-video": { type: "boolean" },
         workers: { type: "string" },
         renderer: { type: "string" },
+        port: { type: "string" },
+        "no-open": { type: "boolean" },
       },
     });
   } catch (e) {
@@ -223,6 +229,23 @@ export async function main(argv) {
     if (e instanceof BriefError) return fail(e.message, args.values.json);
     return fail(e.message, args.values.json);
   }
+}
+
+async function preview(o, [input]) {
+  const { server, url } = await startPreview(input, o);
+  console.log(`Preview: ${url} (Ctrl+C to stop)`);
+  if (!o["no-open"]) openPreview(url);
+  await new Promise((resolve) => {
+    const stop = () => { server.closeAllConnections(); server.close(); };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    server.once("close", () => {
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
+      resolve();
+    });
+  });
+  return 0;
 }
 
 const list = (s) =>

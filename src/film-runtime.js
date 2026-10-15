@@ -12,9 +12,9 @@
   // Where platform UI does not cover the picture. Portrait feeds (Douyin, TikTok, Xiaohongshu,
   // Reels, Shorts) put navigation on top, the author row, caption and like/comment bar at the
   // bottom and an action column on the right; keep text and key action inside this box.
-  view.safe = view.vertical
+  view.safe = film.safe ?? (view.vertical
     ? { x: canvas.width * 0.06, y: canvas.height * 0.1, w: canvas.width * 0.8, h: canvas.height * 0.66 }
-    : { x: canvas.width * 0.05, y: canvas.height * 0.06, w: canvas.width * 0.9, h: canvas.height * 0.88 };
+    : { x: canvas.width * 0.05, y: canvas.height * 0.06, w: canvas.width * 0.9, h: canvas.height * 0.88 });
   const clamp = (x) => Math.max(0, Math.min(1, x));
   const ease = (x) => {
     const t = clamp(x);

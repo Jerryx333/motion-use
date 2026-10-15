@@ -805,7 +805,7 @@ export function filmCaptions(film, lang, voiceTracks) {
   return out.sort((a, b) => a.start - b.start);
 }
 
-// Where platform UI leaves the picture visible; film-runtime.js computes the same box as view.safe.
+// Where platform UI leaves the picture visible; shared by build config, preview and engine jobs.
 export const safeBox = (w, h) =>
   h > w
     ? { x: w * 0.06, y: h * 0.1, w: w * 0.8, h: h * 0.66 }
@@ -959,6 +959,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     data: film.data ?? {},
     offset: range ? range.from : 0,
     guides,
+    safe: safeBox(w, h),
     videos,
     assets,
     files,
