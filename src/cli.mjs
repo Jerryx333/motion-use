@@ -94,7 +94,7 @@ Usage: motion-use <command> [options]
   catalog [styles|shots] [id]   List original style/shot cards; --out <fresh-dir> writes a live preview gallery
   study <id> <dir>    Create a renderable 6-second study from a catalog card (illustrative, intentionally silent)
   concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
-  geo <json>          Project/simplify local GeoJSON or TopoJSON into map data (--out <new.json>)
+  geo <json|world|china-provinces> Project/simplify map data (--out <new.json>); builtins include provenance
   retime [film]       Propose shot windows from actual narration (shot.duration: "narration", tail); --out JSON
   handoff [film]      Export declared sources, separate audio, SRT, shot timeline and provenance hashes
                       (--out <fresh-dir>; --check --out <package> verifies exported bytes)

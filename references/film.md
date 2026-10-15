@@ -229,13 +229,14 @@ Family names use letters, numbers and hyphens, starting with a letter. Each fami
 
 ```bash
 motion-use geo world --out world-map.json --width 1600 --height 900
+motion-use geo china-provinces --out provinces.json
 motion-use geo boundaries.geojson --out local-map.json --projection equirectangular --simplify 0.6
 motion-use geo boundaries.topojson --object provinces --id-field name --out local-map.json
 ```
 
 Input is local Polygon/MultiPolygon GeoJSON or TopoJSON. The compiler fits Mercator (default) or equirectangular projection into the requested canvas with a 16 px margin; simplification tolerance is in output pixels. An explicit `--id-field` selects that properties field, overriding feature.id; missing/empty selected values fail. Without it, IDs use a nonempty feature.id, then properties.name, then the feature index. Duplicate IDs fail. Interior rings remain holes. Projection parameters are saved so `M.geoPoint` places longitude/latitude into the same drawing coordinates. Split antimeridian-crossing rings upstream. The compiler does not perform union, repair invalid polygons, reconstruct historical borders or prove topology after simplification; inspect the output at your selected tolerance.
 
-`world` uses bundled Natural Earth 1:110m admin-0 geometry, public domain, with source/transform information in assets/geo/SOURCES.md. These are present-day illustrative boundaries, not historical or authoritative borders. China province boundaries are not bundled; supply checked source material.
+`world` uses bundled Natural Earth 1:110m admin-0 geometry, public domain, with source/transform information in assets/geo/SOURCES.md. These are present-day illustrative boundaries, not historical or authoritative borders. `china-provinces` provides geoBoundaries gbOpen CHN ADM1: 34 units representing 2019, under CC BY 4.0 distribution terms. It preserves source shapeID values and names; output metadata includes the year and required attribution. Credit **geoBoundaries — www.geoboundaries.org — CC BY 4.0** in the film/product and record changes. Licence text and pinned provenance are bundled beside the data. This is illustrative source geometry; use suitable checked material for historical or authoritative claims.
 
 Load compiled JSON through a declared `files` entry, before declaring readiness. Draw it inside the camera/world transform:
 

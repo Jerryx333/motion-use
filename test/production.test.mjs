@@ -15,7 +15,7 @@ import {
 } from "../src/film.mjs";
 import { exportHandoff, checkHandoff } from "../src/handoff.mjs";
 import { toSrt } from "../src/timing.mjs";
-import { compileGeo } from "../src/geo.mjs";
+import { compileGeo, exportGeo } from "../src/geo.mjs";
 import { retimeFilm } from "../src/retime.mjs";
 import { concatParts } from "../src/concat.mjs";
 import { checkAgainstManifest } from "../src/release.mjs";
@@ -464,4 +464,14 @@ test("explicit geographic ID fields override duplicate native IDs; blank default
   const unnamed = {type:"FeatureCollection",features:[{...square.features[0],id:"",properties:{name:""}}]};
   assert.equal(compileGeo(unnamed).regions[0].id,"0");
   assert.throws(()=>compileGeo(unnamed,{idField:"name"}), /missing or empty/);
+});
+
+test("China ADM1 builtin has 34 distinct regions and preserves its year and attribution", () => {
+ const out=path.join(temp(),"china.json"),result=exportGeo("china-provinces",{out});
+ const map=JSON.parse(fs.readFileSync(out,"utf8"));
+ assert.equal(result.regions,34);assert.equal(new Set(map.regions.map(r=>r.id)).size,34);
+ assert.ok(map.regions.every(r=>r.id && r.name && r.polygons.length));
+ assert.equal(map.source.year,"2019");assert.match(map.source.licenseUrl,/creativecommons.org/);assert.ok(map.source.modifications.length);assert.equal(map.source.license,"CC-BY-4.0");
+ assert.match(result.attribution,/www.geoboundaries.org/);assert.match(map.notice,/2019/);
+ assert.ok(fs.readFileSync(new URL("../assets/geo/LICENSE-geoboundaries.txt",import.meta.url),"utf8").includes("Attribution 4.0 International"));
 });

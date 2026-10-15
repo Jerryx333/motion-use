@@ -75,7 +75,7 @@ export function compileGeo(
     const selected = idField !== undefined ? f.properties?.[idField] : [f.id, f.properties?.name, i].find(usableId);
     if (!usableId(selected)) throw new Error(`geo feature ${i}: --id-field ${idField} is missing or empty`);
     const id = String(selected).trim();
-    if (used.has(id)) throw new Error(`geo duplicate region ID: ${id}`);
+    if (used.has(id)) throw new Error(`geo duplicate region ID: ${id}; choose a unique properties field with --id-field (for example, name)`);
     used.add(id);
     return {
       id,
@@ -227,17 +227,15 @@ export function exportGeo(file, options = {}) {
   const out = path.resolve(options.out);
   if (fs.existsSync(out))
     throw new Error(`${out} exists; choose a fresh --out`);
-  const source =
-    file === "world"
-      ? new URL("../assets/geo/world.geojson", import.meta.url)
-      : file;
+  const builtin = {
+    world: { name: "Natural Earth 1:110m admin-0 countries", license: "Public domain", url: "https://www.naturalearthdata.com/about/terms-of-use/" },
+    "china-provinces": { name: "geoBoundaries gbOpen CHN ADM1", license: "CC-BY-4.0", licenseUrl: "https://creativecommons.org/licenses/by/4.0/", dataUrl: "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/CHN/ADM1/geoBoundaries-CHN-ADM1_simplified.geojson", modifications: ["Properties reduced to shapeID/name", "Coordinates rounded to five decimal places", "Projected and optionally simplified by motion-use"], year: "2019", boundaryID: "CHN-ADM1-43563684", url: "https://www.geoboundaries.org/api/current/gbOpen/CHN/ADM1/", attribution: "geoBoundaries — www.geoboundaries.org — CC BY 4.0" },
+  };
+  const entry = Object.hasOwn(builtin, file) ? builtin[file] : null;
+  const source = entry ? new URL(`../assets/geo/${file}.geojson`, import.meta.url) : file;
   const map = compileGeo(JSON.parse(fs.readFileSync(source, "utf8")), options);
-  if (file === "world")
-    map.source = {
-      name: "Natural Earth 1:110m admin-0 countries",
-      license: "Public domain",
-      url: "https://www.naturalearthdata.com/about/terms-of-use/",
-    };
+  if (entry) map.source = { ...entry };
+  if (entry?.attribution) map.notice += ` Source represents ${entry.year}; credit in the film/product: ${entry.attribution}.`;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(map) + "\n", { flag: "wx" });
   return {
@@ -245,5 +243,6 @@ export function exportGeo(file, options = {}) {
     file: out,
     regions: map.regions.length,
     notice: map.notice,
+    attribution: entry?.attribution ?? null,
   };
 }

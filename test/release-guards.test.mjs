@@ -304,3 +304,12 @@ test("narration checks use the selected clip and do not check an old MP3 instead
   assert.equal(narrationItems(film)[0].file,wav);
   film.tracks=[{id:'a',lang:'en',role:'voiceover',file:mp3}];assert.equal(narrationItems(film)[0].file,mp3);
 });
+
+test("issue #41 original name pairs use actual tone-bearing readings; tone ambiguity remains reviewable", () => {
+ const fixture=JSON.parse(fs.readFileSync(new URL("./fixtures/issue41-homophones.json",import.meta.url),"utf8"));
+ for(const [expected,heard] of fixture.pairs){
+  const result=compareNarration(expected,heard,"zh",fixture);
+  assert.equal(result.flagged,expected==="皖系",expected+" / "+heard);
+  assert.equal(result.changes[0].kind,expected==="皖系"?"tone":"homophone");
+ }
+});
