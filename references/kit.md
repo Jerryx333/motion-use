@@ -47,13 +47,13 @@ Every time-based helper is `(c, t, …positional, options)`; points are `[x, y]`
 "look": {"style": "one sentence", "palette": "paper", "character": "hands only"},
 "data": {"sales": [{"label": {"en": "Q3", "zh": "第三季度"}, "value": 18}]},
 "videos": {"demo": {"file": "footage/demo.mp4", "at": 4, "from": 12.5, "rate": 1, "volume": 0}},
-"music": {"builtin": "pulse", "hits": [3]},
+"music": {"score": "composition/score.js"},
 "shots": [{"id": "peak", "start": 0, "end": 4, "camera": "push", "text": {"en": "Q3 peak"},
            "purpose": "…", "action": "the Q3 bar grows past the others and a callout pins it",
            "narration": {"en": "Sales peaked in the third quarter."}}]
 ```
 
-Palettes: `paper` `poster` `ink` `navy` `bauhaus` `snow` `wood` `chalk` `whiteboard`, or 3–6 hex colors. Music moods: `promo` `explainer` `pulse` `chiptune` `pentatonic` `ambient`, or a song: `{"file": "audio/song.wav", "bpm": 128, "from": 1.3}` from `motion-use beats`. Original documentary accents: `stamp`, `thud`, `paper`, `explosion`, `train`, `map-pin`, `page-turn`, `low-boom` (stylized, not historical recordings). Sound effects take `"align": "peak"` to land their hit on `start`; `"loop": true` checks the last frame leads into the first. Beat-driven briefs and the one-shape morph: [briefing.md](briefing.md). Footage frames are extracted at build time (≤ 5,400 per film); sound only at rate 1.
+Palettes: `paper` `poster` `ink` `navy` `bauhaus` `snow` `wood` `chalk` `whiteboard`, or 3–6 hex colors. Music: each film's own `composition/score.js` ([music.md](music.md)); a built-in bed (`promo` `explainer` `pulse` `chiptune` `pentatonic` `ambient`) only with `music.why`; or a song: `{"file": "audio/song.wav", "bpm": 128, "from": 1.3}` from `motion-use beats`. Original documentary accents: `stamp`, `thud`, `paper`, `explosion`, `train`, `map-pin`, `page-turn`, `low-boom` (stylized, not historical recordings). Sound effects take `"align": "peak"` to land their hit on `start`; `"loop": true` checks the last frame leads into the first. Beat-driven briefs and the one-shape morph: [briefing.md](briefing.md). Footage frames are extracted at build time (≤ 5,400 per film); sound only at rate 1.
 
 ## Cheap iteration
 
