@@ -17,3 +17,4 @@ examples/*/references/*/
 # native renderer build output
 native/target/
 .claude/
+/.instruments-build/

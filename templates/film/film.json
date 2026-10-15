@@ -26,13 +26,9 @@
     "palette": "paper",
     "character": "none"
   },
+  "bpm": 96,
   "music": {
-    "builtin": "pulse",
-    "hits": [
-      4.62,
-      10,
-      14.52
-    ]
+    "score": "composition/score.js"
   },
   "motionBlur": {
     "samples": 4,

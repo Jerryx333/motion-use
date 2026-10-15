@@ -39,6 +39,9 @@ import {
 } from "./film.mjs";
 import { normalizeAudio, verifyVideo, buildNarrationStem } from "./verify.mjs";
 import { generateFilmNarration } from "./film-voiceover.mjs";
+import { composeMusic, evaluateScore, isStarterScore, INSTALL_HINT } from "./compose.mjs";
+import { recordRelease } from "./music-index.mjs";
+import { loadInstruments, packDir, packInstalled, PACK_VERSION } from "./sampler.mjs";
 import { breakdownVideo } from "./breakdown.mjs";
 import { fetchReference } from "./reference.mjs";
 import { analyzeBeats, decodeMono } from "./beats.mjs";
@@ -96,6 +99,10 @@ Usage: motion-use <command> [options]
   concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
   geo <json|world|china-provinces> Project/simplify map data (--out <new.json>); builtins include provenance
   retime [film]       Propose shot windows from actual narration (shot.duration: "narration", tail); --out JSON
+  music [film]        Play the film's own score (composition/score.js) into a WAV without rendering picture:
+                      why, key, tempo, instruments, notes per shot and score warnings (--lang, --out file.wav)
+  instruments [list|install]  The recorded instrument pack the scores play (CC0); install fetches it
+                      (--from <tarball> installs a local copy)
   handoff [film]      Export declared sources, separate audio, SRT, shot timeline and provenance hashes
                       (--out <fresh-dir>; --check --out <package> verifies exported bytes)
   doctor              Check Node, ffmpeg, Chrome and the bundled engine (--install-browser fetches Chrome)
@@ -160,6 +167,8 @@ export async function main(argv) {
     study: studyCmd,
     handoff: handoffCmd,
     retime: retimeCmd,
+    music: musicCmd,
+    instruments: instrumentsCmd,
     geo: geoCmd,
     concat: concatCmd,
     doctor,
@@ -623,6 +632,13 @@ async function render(o, [briefPath]) {
       return fail("--release makes full-quality masters; drop --max-size/--target (render a small README copy separately)", o.json);
     if (o.quality && o.quality !== "high") return fail("--release always renders at --quality high", o.json);
     if (o.from !== undefined || o.to !== undefined) return fail("--release renders the whole film; drop --from/--to", o.json);
+    if (isFilm(briefPath)) {
+      const m = JSON.parse(fs.readFileSync(resolveProject(briefPath), "utf8")).music;
+      if (m === "builtin" || (m && typeof m === "object" && m.builtin !== undefined && !m.why))
+        return fail('--release: the music is a built-in bed that every film of this mood shares. Write composition/score.js for this film ("music": {"score": "composition/score.js"}), or record why the bed is right in music.why', o.json);
+      if (m?.score && fs.existsSync(path.resolve(path.dirname(resolveProject(briefPath)), m.score)) && isStarterScore(path.resolve(path.dirname(resolveProject(briefPath)), m.score)))
+        return fail("--release: composition/score.js is still the starter score every new film begins with; write this film's own music first", o.json);
+    }
   }
   const QUALITY = { draft: "draft", standard: "looks", high: "delivery" };
   const q = o.release ? "high" : (o.quality ?? "standard");
@@ -1050,6 +1066,17 @@ async function render(o, [briefPath]) {
       film: filmFile ? { file: filmFile, sha256: sha(filmFile) } : null,
     });
     if (!o.json) console.log(releaseManifest);
+    if (filmFile)
+      try {
+        const c = checkFilm(filmFile, {});
+        const lang = c.film.languages?.[0];
+        const voice = c.film.tracks.filter((a) => a.role === "voiceover" && (!a.lang || a.lang === lang)).map((a) => ({ start: a.start, end: a.start + a.length }));
+        const score = c.film.scoreFile ? evaluateScore(c.film, lang, voice).score : null;
+        r.warnings = [...(r.warnings ?? []), ...recordRelease(filmFile, c.film, score)];
+        for (const w of r.warnings.slice(-3)) if (!o.json && /^music /.test(w)) console.error(`warning: ${w}`);
+      } catch (e) {
+        console.error(`warning: music index not updated: ${e.message}`);
+      }
   }
   if (o.json && r.results)
     console.log(
@@ -2091,4 +2118,82 @@ async function concatCmd(o,[file,...extra]) {
   if(!file||extra.length)return fail("concat <parts.json> --out <fresh-dir> [--release]",o.json);
   const r=concatParts(file,{...o,version:VERSION});
   console.log(o.json?JSON.stringify(r,null,2):`${r.file}\n${r.report}${r.release_manifest?`\n${r.release_manifest}`:""}`);return r.ok?0:1;
+}
+
+async function musicCmd(o, [input, ...extra]) {
+  if (extra.length) return fail("music [film] --allow-code [--lang zh] [--out music.wav]", o.json);
+  const c = checkFilm(input ?? ".", o);
+  if (!c.ok) return fail(c.report.errors.map((e) => `${e.path}: ${e.message}`).join("\n"), o.json);
+  const film = c.film;
+  if (!film.scoreFile)
+    return fail('this film has no score: write composition/score.js and set "music": {"score": "composition/score.js"}', o.json);
+  if (!o["allow-code"]) return fail("the score is code: pass --allow-code only for a project you wrote or trust", o.json);
+  const lang = c.langs[0] ?? film.languages?.[0];
+  const voice = film.tracks
+    .filter((a) => a.role === "voiceover" && (!a.lang || a.lang === lang))
+    .map((a) => ({ start: a.start, end: a.start + a.length }));
+  const r = composeMusic(film, lang, voice);
+  const out = path.resolve(o.out ?? path.join(c.dir, "out", `music-${lang ?? "film"}.wav`));
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, r.wav);
+  const perShot = film.shots.map((s) => ({ shot: s.id, notes: r.score.events.filter((e) => e.t >= s.start && e.t < s.end).length }));
+  const summary = {
+    ok: true,
+    file: out,
+    why: r.score.why,
+    key: r.score.key,
+    tempo: r.score.tempo,
+    instruments: [...new Set(r.score.events.map((e) => e.instrument))].sort(),
+    notes: r.score.events.length,
+    per_shot: perShot,
+    warnings: r.problems.map((p) => p.message),
+    cached: r.cached,
+  };
+  if (o.json) console.log(JSON.stringify(summary, null, 2));
+  else {
+    console.log(`${out}\n${summary.why}\n${summary.key ?? "no key"} · ${summary.tempo} bpm · ${summary.notes} notes · ${summary.instruments.join(", ")}`);
+    console.log(perShot.map((p) => `  ${p.shot}: ${p.notes}`).join("\n"));
+    for (const w of summary.warnings) console.log(`warning: ${w}`);
+  }
+  return 0;
+}
+
+const PACK_URL = `https://github.com/leeguooooo/motion-use/releases/download/instruments-v${PACK_VERSION}/motion-use-instruments-${PACK_VERSION}.tar.gz`;
+
+async function instrumentsCmd(o, [action = "list", ...extra]) {
+  if (extra.length || !["list", "install"].includes(action))
+    return fail("instruments [list|install] [--from <tarball>]", o.json);
+  if (action === "install") {
+    const dest = packDir();
+    const tmp = fs.mkdtempSync(path.join(path.dirname(dest), ".install-"));
+    try {
+      let tarball = o.from;
+      if (!tarball) {
+        tarball = path.join(tmp, "pack.tar.gz");
+        execFileSync("curl", ["-fsSL", "-o", tarball, PACK_URL], { stdio: "inherit" });
+        const want = execFileSync("curl", ["-fsSL", `${PACK_URL}.sha256`], { encoding: "utf8" }).trim().split(/\s+/)[0];
+        const got = crypto.createHash("sha256").update(fs.readFileSync(tarball)).digest("hex");
+        if (want !== got) return fail(`downloaded pack does not match its checksum (${got} ≠ ${want})`, o.json);
+      }
+      const stage = path.join(tmp, "pack");
+      fs.mkdirSync(stage);
+      execFileSync("tar", ["-xzf", path.resolve(tarball), "-C", stage]);
+      const manifest = JSON.parse(fs.readFileSync(path.join(stage, "manifest.json"), "utf8"));
+      if (manifest.version !== PACK_VERSION)
+        return fail(`this motion-use plays pack ${PACK_VERSION}; ${tarball} is ${manifest.version}`, o.json);
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.renameSync(stage, dest);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  const all = loadInstruments();
+  const list = Object.entries(all).map(([name, v]) => ({ name, label: v.label, family: v.family, synth: Boolean(v.synth), range: v.pitched ? v.range : undefined, hits: v.pitched ? undefined : Object.keys(v.hits ?? {}), maxDur: v.maxDur ?? undefined }));
+  const r = { ok: true, pack: packInstalled() ? packDir() : null, version: PACK_VERSION, instruments: list };
+  if (o.json) console.log(JSON.stringify(r, null, 2));
+  else {
+    console.log(r.pack ? `pack ${PACK_VERSION}: ${r.pack}` : `no recorded instruments yet (${INSTALL_HINT}); synthesized voices only`);
+    for (const i of list) console.log(`  ${i.name.padEnd(16)} ${String(i.family).padEnd(8)} ${i.range ? i.range.join("–") : (i.hits ?? []).join("/")}${i.maxDur ? ` · ≤${i.maxDur}s` : ""}${i.synth ? " · synthesized" : ""}`);
+  }
+  return 0;
 }
