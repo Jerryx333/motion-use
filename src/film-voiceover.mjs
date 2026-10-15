@@ -1,8 +1,9 @@
+import { spoken, displayed } from "./caption-plan.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { validateBrief } from "./brief.mjs";
 import { audioSeconds } from "./build.mjs";
-import { generateVoiceover } from "./voiceover.mjs";
+import { generateVoiceover, narrationFreshness } from "./voiceover.mjs";
 
 const contained = (base, file) => {
   const r = path.relative(base, file);
@@ -68,10 +69,11 @@ export function resolveNarration(
       error("$.voiceover.dir", "directory symlink escapes the project");
   }
   const config = { ...checked.brief.voiceover, dir };
-  const map = (v, p) => {
+  const map = (v, p, select = spoken) => {
     const out = {};
     for (const l of languages) {
-      const text = typeof v === "string" ? v : v?.[l];
+      const value = typeof v === "string" ? v : v?.[l];
+      const text = select(value);
       if (typeof text !== "string" || !text.trim() || text.length > 4000)
         error(
           `${p}.${l}`,
@@ -89,6 +91,7 @@ export function resolveNarration(
             start: 0.1,
             end: film.duration - 0.1,
             narration: map(film.narration, "$.narration"),
+            display: map(film.narration, "$.narration", displayed),
           },
         ]
       : (Array.isArray(film.shots) ? film.shots : [])
@@ -98,6 +101,7 @@ export function resolveNarration(
             start: s.start + 0.08,
             end: s.end - 0.08,
             narration: map(s.narration, `$.shots.${s.id}.narration`),
+            display: map(s.narration, `$.shots.${s.id}.narration`, displayed),
           }));
   const tracks = [],
     pending = [];
@@ -141,6 +145,11 @@ export function resolveNarration(
         continue;
       }
       try {
+        const freshness = narrationFreshness(dir, file, p.narration[l], config, l);
+        if (!freshness.imported && !freshness.current) {
+          error(`$.voiceover.${l}.${p.id}`, "stale narration: script, settings or audio hash changed; regenerate voiceover");
+          continue;
+        }
         const length = probe(file);
         if (length > p.end - p.start + 0.02)
           error(

@@ -1,3 +1,6 @@
+import { projectInput } from "./projects.mjs";
+import { groupCaptions } from "./caption-plan.mjs";
+import { anchoredTime, sequenceFiles, buildFootage } from "./footage.mjs";
 // A film owns its choreography. The CLI owns assets, exact time, packaging and delivery.
 import fs from "node:fs";
 import path from "node:path";
@@ -7,6 +10,7 @@ import { claimDir, audioSeconds, mediaInfo } from "./build.mjs";
 import { execFileSync } from "node:child_process";
 import { writeSubsets, missingGlyphs } from "./fonts.mjs";
 import { writeMusic, MOOD_NAMES, moodBpm } from "./music.mjs";
+import { composeMusic } from "./compose.mjs";
 import { peakTime } from "./beats.mjs";
 import { esc } from "./html.mjs";
 import { BriefError } from "./brief.mjs";
@@ -33,7 +37,7 @@ const inside = (base, file) => {
 
 export function resolveProject(input) {
   if (input) {
-    const p = path.resolve(input);
+    const p = projectInput(input);
     if (fs.existsSync(p) && fs.statSync(p).isDirectory())
       return path.join(
         p,
@@ -209,11 +213,12 @@ export function validateFilm(
     if (!style || typeof style !== "object" || Array.isArray(style)) error("$.captionStyle", "subtitle style options");
     else for (const [key, v] of Object.entries(style)) {
       const p = `$.captionStyle.${key}`;
-      if (["x", "y"].includes(key)) { if (!finite(v, 0, 1)) error(p, "fraction of the frame, 0–1"); }
+      if (key === "split") { if (!["sentence", "shot", "cue"].includes(v)) error(p, "sentence, shot or cue"); }
+      else if (["x", "y"].includes(key)) { if (!finite(v, 0, 1)) error(p, "fraction of the frame, 0–1"); }
       else if (key === "lines") { if (!Number.isInteger(v) || v < 1 || v > 4) error(p, "1–4 subtitle lines"); }
       else if (["size", "maxWidth", "weight"].includes(key)) { if (!finite(v, 1, 4096)) error(p, "positive pixels/count"); }
       else if (["plate", "color"].includes(key)) { if (typeof v !== "string" || !/^(#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([\d.,\s]+\))$/i.test(v)) error(p, "a hex or rgb(a) color"); }
-      else error(p, "supported options: x, y, size, maxWidth, weight, lines, plate, color");
+      else error(p, "supported options: split, x, y, size, maxWidth, weight, lines, plate, color");
     }
   }
   // External engine: a local command renders the picture as PNG frames; the browser composition,
@@ -352,14 +357,28 @@ export function validateFilm(
     warnings.push({ path: p, message }),
   );
   const music = data.music ?? "none";
-  let musicFile = null;
+  let musicFile = null,
+    scoreFile = null;
+  // Every film gets music written for it (composition/score.js). A built-in bed is the same
+  // sound in every film of that mood, so it has to say why it is enough here.
+  const sameBed =
+    "a built-in mood is the same bed in every film that uses it: write composition/score.js for this film (music: {score}), or record why the bed is right here in music.why";
+  if (music === "builtin") warnings.push({ path: "$.music", message: sameBed });
+  if (typeof music === "object" && music && music.why !== undefined) text(music.why, "$.music.why");
   if (!["builtin", "none"].includes(music)) {
     if (!music || typeof music !== "object" || Array.isArray(music))
       error(
         "$.music",
-        '"builtin", "none", {builtin: mood, volume, hits, duck} or {file, volume, bpm, from, duck}',
+        '"none", {score: "composition/score.js", volume}, {file, volume, bpm, from, duck} or {builtin: mood, why, volume, hits, duck}',
       );
-    else if (music.builtin !== undefined) {
+    else if (music.score !== undefined) {
+      if (music.builtin !== undefined || music.file !== undefined)
+        error("$.music", "choose a score, a file or a built-in mood, not two");
+      scoreFile = local(music.score, "$.music.score");
+      if (music.volume !== undefined && !finite(music.volume, 0, 1))
+        error("$.music.volume", "0–1");
+    } else if (music.builtin !== undefined) {
+      if (!music.why) warnings.push({ path: "$.music.builtin", message: sameBed });
       if (music.file !== undefined)
         error("$.music", "choose a built-in mood or a file, not both");
       if (!MOOD_NAMES.includes(music.builtin))
@@ -420,8 +439,9 @@ export function validateFilm(
     const file = ["click", "switch", "whoosh", "ding", "stamp", "thud", "paper", "explosion", "train", "map-pin", "page-turn", "low-boom"].includes(a.effect)
         ? path.join(ROOT, "assets", "sfx", `${a.effect}.wav`)
         : local(a.file, `${p}.file`);
-    let start = a.start ?? 0,
-      offset = a.offset ?? 0,
+    let start;
+    try { start = anchoredTime(a, shots, "start", "delay"); } catch(e) { error(p,e.message); start = 0; }
+    let offset = a.offset ?? 0,
       peak;
     if (!finite(start, 0, data.duration) || !finite(offset, 0, 86400))
       error(p, "non-negative start and offset");
@@ -476,10 +496,12 @@ export function validateFilm(
   if (
     data.motionBlur !== undefined &&
     (!data.motionBlur ||
-      ![1, 2, 4].includes(data.motionBlur.samples) ||
+      ![1, 2, 4, 8].includes(data.motionBlur.samples) ||
       !finite(data.motionBlur.shutter, 0, 1))
   )
-    error("$.motionBlur", "{samples: 1|2|4, shutter: 0–1}");
+    error("$.motionBlur", "{samples: 1|2|4|8, shutter: 0–1}");
+  if (data.motionBlur?.samples === 2 && data.motionBlur.shutter > 0)
+    warnings.push({path:"$.motionBlur",message:"two blur samples can produce two discrete ghost images during fast camera moves, especially text/UI; use 4 or 8 samples, reduce shutter, or disable blur. Camera speed cannot be inferred from arbitrary drawing code."});
   const fileAssets = {};
   if (
     data.assets !== undefined &&
@@ -516,43 +538,53 @@ export function validateFilm(
     data.videos !== undefined &&
     (!data.videos || typeof data.videos !== "object" || Array.isArray(data.videos))
   )
-    error("$.videos", "named footage clips: {name: {file, at, from, rate, length, volume}}");
+    error("$.videos", "named footage clips: {name: {file|frames, at|shot, from, rate, length, volume}}");
   let videoFrames = 0;
   for (const [k, v] of Object.entries(data.videos ?? {})) {
     const p = `$.videos.${k}`;
     if (!/^[a-z][a-z0-9-]{0,39}$/i.test(k) || !v || typeof v !== "object")
       { error(p, "a named clip object"); continue; }
-    if (!/\.(mp4|mov|m4v|webm)$/i.test(v.file ?? "")) error(`${p}.file`, "an MP4, MOV, M4V or WebM file");
-    const f = local(v.file, `${p}.file`);
-    const at = v.at ?? 0,
-      from = v.from ?? 0,
-      rate = v.rate ?? 1;
-    if (!finite(at, 0, data.duration)) error(`${p}.at`, "the film second where the clip starts");
-    if (!finite(from, 0, 86400)) error(`${p}.from`, "seconds into the source");
-    if (!finite(rate, 0.25, 4)) error(`${p}.rate`, "playback speed 0.25–4");
-    if (v.volume !== undefined && !finite(v.volume, 0, 2)) error(`${p}.volume`, "0–2 (default 0: muted)");
-    if (v.volume > 0 && rate !== 1) error(`${p}.volume`, "footage sound plays only at rate 1");
-    if (!f) continue;
     try {
-      const info = mediaInfo(f),
-        room = Math.max(0, ((info.duration ?? 0) - from) / rate),
-        length = v.length ?? Math.min(room, data.duration - at);
-      if (!finite(length, 0.04, 180) || length > room + 0.05 || at + length > data.duration + 0.05)
-        error(p, "the clip runs past its source or the film; set length or from");
-      else {
-        videoFrames += Math.ceil(length * data.fps);
-        videos[k] = { file: f, at, from, rate, length, volume: v.volume ?? 0, width: info.w, height: info.h, audio: info.audio };
+      if (v.file !== undefined && v.frames !== undefined) throw Error("choose file or frames, not both");
+      if (v.hold !== undefined && !["first", "last"].includes(v.hold)) throw Error('hold must be "first" or "last"');
+      if (v.shot === undefined && v.offset !== undefined) throw Error("offset requires shot");
+      const at = anchoredTime(v, shots, "at"), from = v.from ?? 0, rate = v.rate ?? 1;
+      if (!finite(at, 0, data.duration) || !finite(from, 0, 86400) || !finite(rate, 0.25, 4)) throw Error("at/from must be non-negative; rate must be 0.25–4");
+      if (v.volume !== undefined && !finite(v.volume, 0, 2)) throw Error("volume must be 0–2");
+      if (v.volume > 0 && (rate !== 1 || v.frames)) throw Error("footage sound needs a video file at rate 1");
+      let sequence, f, info;
+      if (v.frames !== undefined) {
+        sequence = sequenceFiles(v.frames, (file) => local(file, `${p}.frames`), v.fps, v.startNumber);
+        info = { ...mediaInfo(sequence[0]), duration: sequence.length / v.fps, audio: false };
+        for (const file of sequence.slice(1)) {
+          const header=Buffer.alloc(24), fd=fs.openSync(file,"r");
+          try { fs.readSync(fd,header,0,24,0); } finally { fs.closeSync(fd); }
+          const size = header.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? {w:header.readUInt32BE(16),h:header.readUInt32BE(20)} : mediaInfo(file);
+          if (size.w !== info.w || size.h !== info.h) throw Error(`sequence frame dimensions differ: ${path.basename(file)}`);
+        }
+      } else {
+        if (!/\.(mp4|mov|m4v|webm)$/i.test(v.file ?? "")) throw Error("file must be MP4, MOV, M4V or WebM");
+        f = local(v.file, `${p}.file`); if (!f) continue;
+        info = mediaInfo(f);
       }
-    } catch (e) {
-      error(`${p}.file`, e.message);
-    }
+      const shot = v.shot ? shots.find((s) => s.id === v.shot) : shots.find((s) => at >= s.start && at < s.end);
+      const end = v.shot ? shot.end : data.duration;
+      const room = Math.max(0, (info.duration - from) / rate);
+      const length = v.length ?? Math.min(v.hold === "last" ? end-at : room, end-at);
+      if (!finite(length, 0.04, 180) || room <= 0 || (v.hold !== "last" && length > room + 0.001) || at + length > end + 0.001)
+        throw Error(`length ${length.toFixed?.(3) ?? length} s of film × rate ${rate} = ${(length*rate).toFixed(3)} s of source from ${from}; source duration ${info.duration.toFixed(3)} s, max length ${Math.min(room,end-at).toFixed(3)} s (${v.hold === "last" ? "hold:last permits source overflow" : "set length/from or hold:last"}); film/shot ends at ${end} s`);
+      const holdUntil = Math.min(shot?.end ?? data.duration, ...Object.values(data.videos ?? {}).filter((other) => other !== v).map((other) => { try { const t = anchoredTime(other,shots,"at"); return t>at ? t : data.duration; } catch { return data.duration; } }));
+      videoFrames += sequence ? Math.min(sequence.length,Math.ceil((from+Math.min(length,room)*rate)*v.fps)-Math.floor(from*v.fps)) : Math.ceil(Math.min(length,room) * data.fps);
+      videos[k] = { file:f, ...(sequence ? {sequence, sourceFps:v.fps}:{}), at, from, rate, length, room, hold:v.hold, holdFrom:shot?.start ?? 0, holdUntil, shot:v.shot, volume:v.volume??0, width:info.w,height:info.h,audio:info.audio };
+    } catch(e) { error(p,e.message); }
   }
+
   if (videoFrames > 5400)
     error("$.videos", `${videoFrames} footage frames; keep footage under 5400 frames (90 s at 60 fps) per film`);
   else if (videoFrames > 1800)
-    warnings.push({ path: "$.videos", message: `${videoFrames} footage frames are extracted per language and format (~${Math.round(videoFrames * 0.12)} MB of JPEG in the build folder)` });
+    warnings.push({ path: "$.videos", message: `${videoFrames} footage frames are copied/extracted per language and format; lossless sequence images retain their original size` });
   let glyphs = [];
-  try { glyphs = missingGlyphs(JSON.stringify([data.copy ?? {}, data.data ?? {}, data.captions ?? {}]), fonts); }
+  try { glyphs = missingGlyphs(JSON.stringify([data.copy ?? {}, data.data ?? {}, data.captions ?? {}, data.narration ?? {}, data.shots?.map((s)=>s.narration) ?? []]), fonts); }
   catch (e) { error("$.fonts", `cannot read font: ${e.message}`); }
   if (glyphs.length)
     error("$.copy", `missing font glyphs: ${glyphs.join(" ")}`);
@@ -575,6 +607,7 @@ export function validateFilm(
       composition,
       source,
       musicFile,
+      scoreFile,
       bpm,
       tracks,
       fileAssets,
@@ -788,7 +821,7 @@ export function initFilm(o, dir) {
   const draw = path.join(dir, "composition", "draw.js"),
     director = path.join(dir, "DIRECTOR.md");
   // Preflight every target before writing any file. Never erase custom drawing code on re-init.
-  for (const f of [target, draw, director])
+  for (const f of [target, draw, director, path.join(dir,"SCRIPT.md")])
     if (fs.existsSync(f))
       throw new BriefError(
         `${f} already exists; choose a fresh project directory`,
@@ -831,17 +864,21 @@ export function initFilm(o, dir) {
   fs.mkdirSync(path.dirname(draw), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(data, null, 2) + "\n");
   fs.copyFileSync(path.join(ROOT, "templates", "film", "draw.js"), draw);
+  fs.copyFileSync(path.join(ROOT, "templates", "film", "score.js"), path.join(path.dirname(draw), "score.js"));
   fs.copyFileSync(
     path.join(ROOT, "templates", "film", "DIRECTOR.md"),
     director,
   );
-  return { ok: true, film: target, composition: draw, director, mode: "film" };
+  fs.copyFileSync(path.join(ROOT,"templates","film","SCRIPT.md"),path.join(dir,"SCRIPT.md"));
+  fs.mkdirSync(path.join(dir,"reviews"),{recursive:true});
+  return { ok: true, film: target, composition: draw, director, script:path.join(dir,"SCRIPT.md"), mode: "film" };
 }
 
 // Subtitles for the narration actually placed in this language: cues timed by the voice
 // service when the clip still matches its manifest entry, otherwise estimated per sentence.
 export function filmCaptions(film, lang, voiceTracks) {
   if (film.captions?.[lang] !== undefined) return film.captions[lang].map((c) => ({ ...c }));
+  const mode = film.captionStyle?.split ?? "sentence";
   const dir = film.narrationConfig?.dir,
     manifest = dir ? readVoManifest(dir) : {},
     out = [];
@@ -855,10 +892,14 @@ export function filmCaptions(film, lang, voiceTracks) {
         // Service cue text contains pronunciation substitutions; estimate from the display script instead.
         rec.text === text &&
         rec.sha === crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex");
-    if (current)
-      for (const c of rec.cues)
-        out.push({ text: c.text, start: +(track.start + c.start).toFixed(3), end: +(track.start + Math.min(c.end, track.length)).toFixed(3) });
-    else out.push(...estimateCues(text, track.start, track.start + track.length));
+    const display = plan?.display?.[lang] ?? text;
+    let cues;
+    if (current && display === text)
+      cues = rec.cues.filter((c) => c.start < track.length).map((c) => ({ text: c.text, start: +(track.start + c.start).toFixed(3), end: +(track.start + Math.min(c.end, track.length)).toFixed(3) }));
+    else cues = estimateCues(display, track.start, track.start + track.length);
+    if (mode === "shot") {
+      if (cues.length) out.push({ text: display, start:cues[0].start, end:cues.at(-1).end, ...(cues.some((c)=>c.estimated) ? {estimated:true}: {}) });
+    } else out.push(...groupCaptions(cues, mode));
   }
   return out.sort((a, b) => a.start - b.start);
 }
@@ -868,7 +909,7 @@ export function filmWords(film, lang, voiceTracks) {
   const dir=film.narrationConfig?.dir, manifest=dir?readVoManifest(dir):{};
   return voiceTracks.flatMap((track)=>{
     const plan=film.narrationPlans?.find((p)=>p.id===track.id), rec=dir?manifest[path.relative(dir,track.file)]:null;
-    if(!rec?.words || rec.text!==plan?.narration?.[lang] || rec.sha!==crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex")) return [];
+    if((plan?.display?.[lang] && plan.display[lang] !== plan.narration[lang]) || !rec?.words || rec.text!==plan?.narration?.[lang] || rec.sha!==crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex")) return [];
     return rec.words.filter((w)=>Number.isFinite(w.start)&&Number.isFinite(w.end)&&w.start>=0&&w.end>w.start&&w.end<=track.length+.05)
       .map((w)=>({...w,id:track.id,start:track.start+w.start,end:track.start+Math.min(track.length,w.end),estimated:false}));
   }).sort((a,b)=>a.start-b.start);
@@ -880,7 +921,7 @@ export const safeBox = (w, h) =>
     ? { x: w * 0.06, y: h * 0.1, w: w * 0.8, h: h * 0.66 }
     : { x: w * 0.05, y: h * 0.06, w: w * 0.9, h: h * 0.88 };
 
-export async function buildFilm(film, lang, format, outDir, { range = null, guides = false, noCaptions = false, noBgm = false } = {}) {
+export async function buildFilm(film, lang, format, outDir, { range = null, guides = false, noCaptions = false, noBgm = false, progress = () => {} } = {}) {
   claimDir(outDir);
   const [w, h] = FILM_FORMATS[format],
     fmt = { w, h, vertical: h > w, name: format };
@@ -917,24 +958,15 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     if (range && (v.at >= range.to || v.at + v.length <= range.from)) continue;
     const dir = path.join(outDir, "assets", "video", key);
     fs.mkdirSync(dir, { recursive: true });
-    // Output frame k (film time at + k/fps) shows source time from + k·rate/fps.
-    const scale = Math.min(1, Math.max(w, h) / Math.max(v.width, v.height));
-    execFileSync(
-      "ffmpeg",
-      ["-v", "error", "-y", "-ss", String(v.from), "-t", String(v.length * v.rate), "-i", v.file,
-        "-vf", `fps=${film.fps / v.rate},scale=${Math.round((v.width * scale) / 2) * 2}:-2`, "-q:v", "3", "-start_number", "0",
-        path.join(dir, "%05d.jpg")],
-      { stdio: ["ignore", "ignore", "pipe"] },
-    );
-    const frames = fs.readdirSync(dir).filter((f) => f.endsWith(".jpg")).length;
-    if (!frames) throw new Error(`no frames could be read from ${v.file}`);
-    videos[key] = { dir: `assets/video/${key}`, at: v.at, length: v.length, frames, fps: film.fps };
+    const { frames, ext, fps = film.fps, frameOffset = 0 } = buildFootage(v, dir, film.fps, Math.max(w,h));
+    videos[key] = { dir: `assets/video/${key}`, at: v.at, length: v.length, frames, ext, fps, frameOffset, hold:v.hold, playLength:Math.min(v.length,v.room), holdFrom:v.holdFrom, holdUntil:v.holdUntil };
+
   }
   const fontDir = path.join(outDir, "assets", "fonts");
   const fontSizes = await writeSubsets(
     // The kit draws characters of its own (e.g. "−" and "," in count()).
     JSON.stringify(film.copy) +
-    JSON.stringify(film.data ?? {}) + JSON.stringify(film.captions ?? {}) +
+    JSON.stringify(film.data ?? {}) + JSON.stringify(film.captions ?? {}) + JSON.stringify(film.narrationPlans ?? []) +
       (film.source ? fs.readFileSync(film.source, "utf8") : "") +
       fs.readFileSync(path.join(ROOT, "src", "film-kit.js"), "utf8"),
     fontDir,
@@ -954,7 +986,17 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     selectedTracks = range ? [] : film.tracks.filter((a) => (!a.lang || a.lang === lang) && !(noBgm && a.role === "music"));
   if (!range && !noBgm && film.music !== "none" && film.music !== undefined) {
     let rel = "assets/audio/music.wav";
-    if (film.music === "builtin" || film.music.builtin)
+    if (film.scoreFile) {
+      const voice = selectedTracks
+        .filter((a) => a.role === "voiceover")
+        .map((a) => ({ start: a.start, end: a.start + a.length }));
+      progress("score", "start", { lang, format });
+      const { wav, score, problems } = composeMusic(film, lang, voice);
+      progress("score", "finish");
+      fs.writeFileSync(path.join(outDir, rel), wav);
+      fs.writeFileSync(path.join(outDir, "assets", "audio", "score.json"), JSON.stringify({ why: score.why, tempo: score.tempo, key: score.key, instruments: [...new Set(score.events.map((e) => e.instrument))].sort(), notes: score.events.length, warnings: problems.map((p) => p.message) }, null, 2));
+      for (const p of problems) console.error(`warning: music score: ${p.message}`);
+    } else if (film.music === "builtin" || film.music.builtin)
       writeMusic(
         path.join(outDir, rel),
         film.music.builtin ?? "promo",

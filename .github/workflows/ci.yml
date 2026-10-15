@@ -46,7 +46,7 @@ jobs:
           # Shorten only the smoke fixture, preserving a contiguous shot plan.
           # A local tone stands in for a voice fixture; no cloud TTS in CI.
           ffmpeg -v error -y -f lavfi -i 'sine=frequency=880:duration=1' "$RUNNER_TEMP/film/voice.wav"
-          node --input-type=module -e 'import fs from "node:fs"; const p=process.env.RUNNER_TEMP+"/film/film.json"; const d=JSON.parse(fs.readFileSync(p)); d.duration=2; d.music={builtin:"pulse"}; d.shots=[{id:"smoke",start:0,end:2,purpose:"Exercise exact-time capture",action:"Two objects move"}]; d.audio=[{file:"voice.wav",lang:"en",role:"voiceover",start:0.1,volume:1}]; fs.writeFileSync(p,JSON.stringify(d));'
+          node --input-type=module -e 'import fs from "node:fs"; const p=process.env.RUNNER_TEMP+"/film/film.json"; const d=JSON.parse(fs.readFileSync(p)); d.duration=2; d.music={builtin:"pulse",why:"CI smoke fixture: a 2 s shot proves the mix path, not the music"}; d.shots=[{id:"smoke",start:0,end:2,purpose:"Exercise exact-time capture",action:"Two objects move"}]; d.audio=[{file:"voice.wav",lang:"en",role:"voiceover",start:0.1,volume:1}]; fs.writeFileSync(p,JSON.stringify(d));'
           node bin/motion-use.mjs render "$RUNNER_TEMP/film" --allow-code --quality draft --json > film-render.json
           node -e 'const r=require("./film-render.json"); if (!r.ok || !r.outputs[0].verification.ok || !r.outputs[0].verification.narration.ok || !r.snapshot || r.outputs[0].verification.text_check?.skipped) process.exit(1);'
           # Release masters and their manifest; every listed file must match its hash.

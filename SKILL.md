@@ -14,15 +14,31 @@ motion-use doctor
 
 ## 1 · Plan
 
+Unless the user specifies a location, create films with `motion-use init <name>` under
+`~/motion-use/<name>/` (override `MOTION_USE_PROJECTS`; `MOTION_USE_HOME` is the CLI installation).
+Use `motion-use list --json` to find past projects; explicit paths such as `./draft` still work.
+Do not place new film projects in a product source repository by default.
+
+Before authoring film.json, drawing code or generating speech, write and review `SCRIPT.md`:
+opening frame/first line, shot actions with source evidence, spoken and displayed copy,
+screen text and ending action. Init's generated files are scaffolds. Save pass/revise plus
+concrete edits in `reviews/01-script.md`; fix failed points before production. The reviewer
+gets only text at this stage. Check whether the opening earns attention, each line maps to
+an action, claims are supported, wording avoids filler/repeated patterns, and the ending
+acts on the subject. Continue through keyframe review, range-draft rhythm review and final
+MP4 review, giving each reviewer only that stage's artifacts. See production.md for inputs
+and review records; a user-approved script counts as reviewed without another approval gate.
+
 Use the user's subject, material and existing project; verify product claims against the source or real behavior. An invented UI, cursor walkthrough or process illustration must not pass as a real recording or real terminal output; say it is an illustration. Ask only for decisions that change the result.
 
 Read [references/production.md](references/production.md) for direction selection, feature-to-shot mapping, speech timing, review and editable delivery. When direction is open, compare A (direct), B (another medium), C (another telling) in project-local `DIRECTIONS.md`; render one representative frame each, or 2–4 seconds when motion decides the choice. Record an existing choice or delegation and continue without another gate. Do not make three full films. Map every required fact/feature to source evidence, a stable shot ID, its visible state change and final review evidence in `DIRECTOR.md`.
 
 `motion-use catalog styles|shots` lists original cards; `catalog --out <fresh-dir>` creates a browsable, scrubbable gallery. `study <id> <fresh-dir>` creates the same mechanism as a renderable six-second silent film. Read the card's parameters and pitfalls before adapting it. These are illustrative studies, not a substitute for the subject's real material or a finished film.
 
-`motion-use init <dir>` writes `film.json`, `composition/draw.js` and `DIRECTOR.md`. The starter is a study to replace, not a template to re-skin: a film laid out like it is flagged (`demo_similarity`).
+`motion-use init <name|path>` writes `SCRIPT.md`, `film.json`, `composition/draw.js`, `composition/score.js` and `DIRECTOR.md`. The starters are studies to replace, not a template to re-skin: a film laid out like it is flagged (`demo_similarity`).
 
 - Lock `look`: one style sentence, one palette, the character approach (none, hands, footage, generated frames — not code-drawn mascots).
+- Direct the music with the look: which instruments and mode belong to this subject, where it is sparse, where it peaks, which picture events it hits. Every film gets its own `composition/score.js`; a built-in mood is the same bed in every film and `--release` refuses it without `music.why`. [references/music.md](references/music.md).
 - Each shot names an object you could point at, what *it* does, its `camera` move and the ≤ 8 words on screen. Open on a concrete small scene; end on an action on the subject, not a centred card; keep one example through the film.
 - Words go in `copy` per language, numbers and series in `data`, images in `assets`, footage in `videos`. Changing one value then changes one thing.
 - Fill the brief fields first: `motion-use init <dir> --subject … --purpose … --audience … --tone … --palette … --length 30` (or edit `film.json` → `brief`); `validate` lists any field still a TODO.
@@ -38,9 +54,13 @@ Films render with the native renderer (motion-render, installed by install.sh; `
 
 3D or another renderer: models, HDRs and decoders go in `files` (a three.js loader fetches `window.filmFiles.<name>`); a scene that belongs in Blender, Unity or Godot runs as `"engine": {"type": "command", "command": [...]}`, which renders PNG frames (or, with `"stream": true`, raw RGBA into a FIFO) from a job file while motion-use keeps sound, delivery checks and release. Draw subtitles in `composition` as a transparent overlay so the text check still measures them. Contract: film.md → External engines.
 
-Narration is required by default: write it per shot (each language), then `motion-use voiceover <dir>`; it must fit its shot window, so shorten the script or retime the shot, never truncate. `M.captions(c, t)` draws subtitles from it. `voiceover:false` only when the user wants a silent film.
+For real product material, first look for screenshot tests, a headless renderer or Storybook; render repeatable source frames rather than occupying the user’s screen. `videos.<name>.frames` accepts lossless numbered images directly. Footage/audio can anchor to a `shot`; `hold:last` retains a clip’s final frame. See film.md for timing contracts.
 
-`voiceover --json` reports actual clip paths, formats, seconds and window fit. Mark a shot `"duration":"narration","tail":0.4`, generate the voice, then `motion-use retime <dir>` proposes `film.retimed.json` with frame-aligned windows; the original and brief target are preserved. Do this before placing external audio/cues/footage. With Azure, opt into `voiceover --engine azure --word-timing` for measured word boundaries (optional pinned SDK via uv). `M.at('phrase', {shot:'id'})` uses only cache-matched service timestamps; missing/ambiguous timing throws. For imported or manually checked timing, declare `captions.<lang>` and `cues.<lang>` and use `M.cue('slug')`, preserving estimated flags. Never call sentence interpolation measured word timing.
+Narration is required by default: write it per shot (each language), using `{say,text}` when pronunciation differs from displayed copy; `captionStyle.split` selects sentence (default), shot or cue. Then `motion-use voiceover <dir>`; it must fit its shot window, so shorten the script or retime the shot, never truncate. `M.captions(c, t)` draws subtitles from it. `voiceover:false` only when the user wants a silent film.
+
+`voiceover --json` reports actual clip paths, formats, seconds and window fit. Mark a shot `"duration":"narration","tail":0.4`, generate the voice, then `motion-use retime <dir>` proposes `film.retimed.json` with frame-aligned windows; the original and brief target are preserved. Do this before placing absolute-time audio/cues/footage; shot-anchored audio/footage follow the new windows. With Azure, opt into `voiceover --engine azure --word-timing` for measured word boundaries (optional pinned SDK via uv). `M.at('phrase', {shot:'id'})` uses only cache-matched service timestamps; missing/ambiguous timing throws. For imported or manually checked timing, declare `captions.<lang>` and `cues.<lang>` and use `M.cue('slug')`, preserving estimated flags. Never call sentence interpolation measured word timing.
+
+Write the music after `retime`, against the final shot windows: `S.why(…)`, instruments from `motion-use instruments`, a mode, an `S.arc` over the shots, accents at picture events, melody kept out of narration. `motion-use music . --allow-code` renders it alone with notes per shot; listen against the picture. Contract and helpers: [references/music.md](references/music.md).
 
 For geographic explainers, `motion-use geo world --out map.json` projects the bundled illustrative Natural Earth boundaries; `geo china-provinces` uses 34 geoBoundaries ADM1 units from 2019 and requires the output attribution in film credits; pass a local GeoJSON/TopoJSON for your own data. Load the compiled JSON through `files`; `M.map`, `geoPoint`, `route`, `arrow`, `pin` and updating `list` handle generic map motion. Use actual historical geometry for historical boundary claims. Custom `fonts` need a local font and licence file; `captionStyle` configures subtitle plate/size/position. Contract and limits: film.md.
 

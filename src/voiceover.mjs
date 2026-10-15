@@ -52,7 +52,7 @@ async function azure(text, voice, rate, out) {
     body: ssml(text, voice, rate),
     signal: AbortSignal.timeout(60000),
   });
-  if (!res.ok) throw new Error(`Azure Speech returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`Azure Speech returned ${res.status}${res.status === 429 ? "; rate limited: wait before retrying voiceover" : ""}`);
   fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
 }
 
@@ -89,7 +89,7 @@ export function runEdgeTts(args, { run = spawnSync, command } = {}) {
     if (r.status !== 0) throw new Error("edge-tts was rejected (403); upgrade it: uv tool upgrade edge-tts, or pip install -U edge-tts");
   }
   if (r.error?.code === "ENOENT") throw new Error("edge-tts is not installed (pip install edge-tts, or uv tool install edge-tts)");
-  if (r.status !== 0) throw new Error(`edge-tts failed: ${(r.stderr || r.stdout).trim().split("\n").pop()}`);
+  if (r.status !== 0) throw new Error(sanitizeSpeechError(`edge-tts failed: ${(r.stderr || r.stdout).trim().split("\n").pop()}`));
 }
 
 function edge(text, voice, rate, out) {
@@ -200,13 +200,16 @@ export async function generateVoiceover(brief, { langs = brief.languages, engine
       let cues = null, words = null;
       try {
         log(`${lang}/${scene.id}: ${engine} ${voice}`);
-        if (engine === "azure") { if (wordTiming) words = azureTimed(text, voice, rate, tmp); else await azure(text, voice, rate, tmp); }
-        else cues = edge(text, voice, rate, tmp);
+        await retrySpeech(async () => {
+          fs.rmSync(tmp, { force: true });
+          if (engine === "azure") { if (wordTiming) words = azureTimed(text, voice, rate, tmp); else await azure(text, voice, rate, tmp); }
+          else cues = edge(text, voice, rate, tmp);
+        });
         if (!fs.existsSync(tmp) || fs.statSync(tmp).size === 0) throw new Error("no audio was written");
         fs.renameSync(tmp, out);
       } catch (e) {
         fs.rmSync(tmp, { force: true });
-        rows.push({ ...row, status: "error", error: e.message });
+        rows.push({ ...row, status: "error", error: sanitizeSpeechError(e.message), stale: fs.existsSync(out) });
         continue;
       }
       manifest[rel] = { ...want, sha: sha(fs.readFileSync(out)), ...(cues?.length ? { cues } : {}), ...(words?.length ? { words } : {}) };
@@ -236,5 +239,31 @@ export function edgeAvailable() {
     return true;
   } catch {
     return false;
+  }
+}
+
+export function sanitizeSpeechError(message) {
+  return String(message).replace(/(?:https?|wss?):\/\/[^\s'"<>]+/gi, "[service URL redacted]") + (/\b429\b/.test(message) ? "; rate limited: wait before retrying voiceover" : "");
+}
+
+// Imported recordings remain supported. A tracked generated clip must match both
+// the current script/settings and the bytes; stale generation never becomes timing.
+export function narrationFreshness(dir, file, text, config = {}, lang) {
+  const record = readVoManifest(dir)[path.relative(dir, file)];
+  if (!record) return { current: false, imported: true };
+  const current = record.text === text && record.sha === sha(fs.readFileSync(file)) &&
+    record.voice === (config.voices?.[lang] ?? DEFAULT_VOICES[lang]) &&
+    record.rate === (config.rates?.[lang] ?? "+0%") &&
+    (!config.engine || record.engine === config.engine);
+  return { current, imported: false };
+}
+
+export async function retrySpeech(run, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(); }
+    catch (e) {
+      if (attempt >= 2 || !/\b429\b/.test(e.message)) throw e;
+      await sleep(1000 * 2 ** attempt);
+    }
   }
 }

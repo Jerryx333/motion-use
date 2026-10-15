@@ -242,6 +242,7 @@ export function verifyVideo(
   outDir,
   {
     expected = {},
+    progress = () => {},
     shots = [],
     narrationStem = null,
     narrationTracks = [],
@@ -256,6 +257,7 @@ export function verifyVideo(
     errors = compareDelivery(meta, expected),
     warnings = [];
   claimDir(outDir);
+  progress("decode", "start");
   const decode = spawnSync(
     "ffmpeg",
     [
@@ -278,6 +280,7 @@ export function verifyVideo(
     errors.push(
       `decode failed: ${decode.error?.message || decode.stderr.slice(-800)}`,
     );
+  progress("decode", decode.error || decode.status !== 0 ? "error" : "finish");
   let sound = null;
   if (meta.audio)
     try {
@@ -443,9 +446,10 @@ export function verifyVideo(
         rms_dbfs: Number.isFinite(Number(value)) ? Number(value) : null,
       });
     }
+  progress("motion_analysis", "start");
   let motion = null;
   try {
-    const measured = measureMotion(file, { cuts: motionCheck.cuts ?? [] });
+    const measured = measureMotion(file, { cuts: motionCheck.cuts ?? [], shots });
     const graded = gradeMotion(measured, motionCheck);
     motion = {
       level: graded.level,
@@ -519,6 +523,7 @@ export function verifyVideo(
   };
   const reportFile = path.join(outDir, "report.json");
   fs.writeFileSync(reportFile, JSON.stringify(report, null, 2) + "\n");
+  progress("motion_analysis", "finish");
   return { ...report, report: reportFile };
 }
 

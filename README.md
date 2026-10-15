@@ -93,7 +93,7 @@ Full schema: [references/brief.md](references/brief.md). Examples: [examples/](e
 - **Real footage.** `video` scenes play your own screen recordings (trimmed, sped up); `image` scenes show screenshots or illustrations made with [image-use](https://github.com/leeguooooo/image-use). Both can highlight a region (everything else dims) and zoom into it.
 - **Your brand.** Logo on the cover, end card and (optionally) every scene; a full color palette with contrast checks; your own fonts, subset per video, with their license.
 - **Vertical safe areas.** 9:16 keeps text clear of the like/share column and the caption block.
-- **Reproducible and local.** Same brief, same video: bit for bit (software rendering), except that frames of a recorded clip can differ by invisible noise. Animations are CSS that [HyperFrames](https://github.com/heygen-com/hyperframes) seeks frame by frame; fonts ship with motion-use and are cut to the characters each video uses; music is synthesized to the video's length. Rendering loads nothing from the network and runs the engine with telemetry off (`HYPERFRAMES_NO_TELEMETRY`, `DO_NOT_TRACK`). The CLI checks GitHub for a newer release at most once a day; `MOTION_USE_NO_UPDATE_CHECK=1` turns that off.
+- **Reproducible and local.** Same brief, same video: bit for bit (software rendering), except that frames of a recorded clip can differ by invisible noise. Animations are CSS that [HyperFrames](https://github.com/heygen-com/hyperframes) seeks frame by frame; fonts ship with motion-use and are cut to the characters each video uses; each film's music is written for it (`composition/score.js`) and played with recorded CC0 instruments. Rendering loads nothing from the network and runs the engine with telemetry off (`HYPERFRAMES_NO_TELEMETRY`, `DO_NOT_TRACK`). The CLI checks GitHub for a newer release at most once a day; `MOTION_USE_NO_UPDATE_CHECK=1` turns that off.
 - **Safe with untrusted text.** Brief text is always drawn as text, never HTML. Custom HTML scenes exist for when templates are not enough, but render only with `--allow-custom-html`. motion-use never overwrites output files it did not write (`--force` to override).
 
 ## Requirements
@@ -122,6 +122,8 @@ The installer downloads the release archive and its `.sha256` from GitHub, verif
 | `breakdown <video>` | Take a reference apart: cuts, beat grid, contact sheets, transition strips, motion heatmaps, palette, motion lights |
 | `reference <url>` | Save a published piece for study (a [Prompt Motion](https://prompt-motion.com) entry, or any page with a `VideoObject`): creator and post, the prompt or skill, the video and its breakdown, in a git-ignored `references/<slug>/`. The prompt stays its creator's: paraphrase, never paste |
 | `beats <audio>` | Measure a song: tempo, first downbeat, bar loudness, the drop; prints the `music` line that starts the film on a downbeat |
+| `music [film]` | Play the film's own score (`composition/score.js`, written for this film: instruments, mode, where it peaks, accents on picture events) into a WAV, with notes per shot and score warnings |
+| `instruments [list\|install]` | The recorded CC0 instrument pack scores play (zither, harp, piano, bells, gong, frame drum, strings, winds…) |
 | `compare <a> <b>` | Frames of two videos side by side: `--times 1.5,4` |
 | `doctor` | Check Node, FFmpeg, Chrome, the engine, the native renderer and fonts |
 | `upgrade` | Update the CLI and its skill; `--check` only looks |
@@ -151,3 +153,19 @@ motion-use concat parts.json --out ./joined --release
 Studies use illustrative objects and data. Handoff packages contain SRT, separate source audio, shot timing, explicitly declared inputs and provenance hashes, not a native editor draft or a rendered clean plate. Code-driven motion stays baked; no-captions suppresses M.captions, not custom drawing or text inside footage. Variants have distinct filenames and replayable snapshot settings. Drafts remain under out/preview even when delivery measurements fail.
 
 The [film contract](references/film.md) also covers imported subtitles/keyword cues, optional measured Azure word boundaries, narration-driven retiming, custom licensed fonts, compiled GeoJSON/TopoJSON maps, camera anchors, updating legends, original documentary SFX, joined-master verification and remote-render synchronization.
+
+Long renders can report phases on stderr without changing the final JSON result:
+`motion-use render <dir> --allow-code --json --progress text` (or `--progress json`
+for NDJSON events). Overlapping still/render jobs sharing `--out` now fail early.
+`motion-use <command> --help` displays CLI usage. See
+[frame boundaries and concurrent jobs](references/film.md#frame-boundaries-and-concurrent-jobs)
+for exact cut timing, lock recovery and narration freshness requirements.
+
+New films use `motion-use init <name>` under `~/motion-use/<name>` (configure
+`MOTION_USE_PROJECTS`); `motion-use list --json` finds projects and their release
+masters. Explicit paths still work. Review SCRIPT.md before production, then
+keyframes, range drafts and the final cut. Narration supports separate `{say,text}`
+copy and sentence/shot/cue subtitle grouping. Footage accepts lossless numbered
+image sequences, shot-relative placement and first/last frame holds. Reports now
+include per-shot motion diagnostics; selected stills scope text checks to the
+requested time windows. See the [film contract](references/film.md).

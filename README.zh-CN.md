@@ -120,7 +120,7 @@ brief 是一组场景：`title`、`terminal`、`steps`、`diagram`、`features`�
 - **真实素材。** `video` 场景播放你自己的录屏（可剪切、加速）；`image` 场景展示截图或用 [image-use](https://github.com/leeguooooo/image-use) 生成的插图。两者都能高亮一个区域（其余部分压暗）并放大。
 - **你的品牌。** 封面、片尾和（可选）每个场景上的 logo；带对比度检查的完整配色；你自己的字体，按每个视频用到的字裁剪，附带许可证。
 - **竖版安全区。** 9:16 的文字会避开点赞分享那一列和底部文案区。
-- **可复现，全本地。** 同一份 brief 渲染出同一个视频，逐位一致（软件渲染），录屏片段的帧可能有肉眼不可见的差异。动画是 CSS，由 [HyperFrames](https://github.com/heygen-com/hyperframes) 逐帧定位；字体随 motion-use 发布，并按每个视频用到的字裁剪；配乐按视频长度合成。渲染不从网络加载任何资源，引擎的统计上报已关闭（`HYPERFRAMES_NO_TELEMETRY`、`DO_NOT_TRACK`）。CLI 每天最多访问一次 GitHub 检查新版本，设置 `MOTION_USE_NO_UPDATE_CHECK=1` 可以关闭。
+- **可复现，全本地。** 同一份 brief 渲染出同一个视频，逐位一致（软件渲染），录屏片段的帧可能有肉眼不可见的差异。动画是 CSS，由 [HyperFrames](https://github.com/heygen-com/hyperframes) 逐帧定位；字体随 motion-use 发布，并按每个视频用到的字裁剪；每条片子的配乐按题材单独写（`composition/score.js`），用 CC0 真实乐器演奏。渲染不从网络加载任何资源，引擎的统计上报已关闭（`HYPERFRAMES_NO_TELEMETRY`、`DO_NOT_TRACK`）。CLI 每天最多访问一次 GitHub 检查新版本，设置 `MOTION_USE_NO_UPDATE_CHECK=1` 可以关闭。
 - **不信任的文字也安全。** brief 里的文字始终当作文字绘制，不当 HTML。模板不够用时可以写自定义 HTML 场景，但必须加 `--allow-custom-html` 才会渲染。motion-use 不会覆盖不是它写出的输出文件（`--force` 可以强制覆盖）。
 
 ## 环境要求
@@ -149,6 +149,8 @@ motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片
 | `breakdown <video>` | 拆解参考片：切点、节拍网格、联系表、转场条、运动热力图、色板、运动指标 |
 | `reference <url>` | 把别人发布的作品存下来研究（[Prompt Motion](https://prompt-motion.com) 的作品页，或任何带 `VideoObject` 的页面）：作者和原帖、提示词或 skill、视频和拆解结果，放在不进 git 的 `references/<slug>/`。提示词归原作者，只能借鉴着自己写，不能照抄 |
 | `beats <audio>` | 测一首歌：速度、第一个强拍、每小节响度、高潮；打印让片子从强拍开始的 `music` 配置 |
+| `music [film]` | 只渲染这条片子自己的配乐（`composition/score.js`：按题材选乐器、调式、高潮位置和画面重音），并报告每个镜头的音符数和配乐警告 |
+| `instruments [list\|install]` | 配乐方案演奏用的 CC0 真实乐器包（筝、竖琴、钢琴、钟、锣、框鼓、弦乐、木管……） |
 | `compare <a> <b>` | 两支片子同一时刻并排对比：`--times 1.5,4` |
 | `doctor` | 检查 Node、FFmpeg、Chrome、引擎、原生渲染器和字体 |
 | `upgrade` | 更新 CLI 和它的 skill；`--check` 只检查不安装 |
@@ -158,3 +160,16 @@ motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片
 ## 许可证
 
 motion-use 使用 MIT 许可证。渲染引擎 HyperFrames 是 Apache-2.0。字体是 SIL OFL；音效是 CC0 或原创；引擎的一个依赖（`@img/sharp-libvips`）是 LGPL-3.0。所有文件和依赖都列在 [ASSETS.md](ASSETS.md)。motion-use 和 HyperFrames、Remotion 等工具的对比见 [docs/alternatives.md](docs/alternatives.md)。
+
+长片渲染可用 `--json --progress text` 查看阶段进度，或用 `--progress json`
+读取 stderr 上的 NDJSON 事件；stdout 仍只输出最终 JSON。同一 `--out` 上重叠的
+still/render 会立即报错。子命令支持 `--help`。
+镜头边界、锁恢复和 retime 的旁白校验要求见
+[影片契约](references/film.md#frame-boundaries-and-concurrent-jobs)。
+
+`motion-use init <名称>` 默认在 `~/motion-use/<名称>` 建项目，可用
+`MOTION_USE_PROJECTS` 改根目录；显式路径仍然有效。`motion-use list --json`
+可查项目及发布母版。制作前先审 SCRIPT.md，再审关键帧、片段节奏和成片。
+旁白可分开 `say/text`，字幕可按句、镜头或原始 cue 分组。素材支持无损图片序列、
+镜头相对时间及首尾帧停留。报告增加逐镜头运动诊断，选定静帧只检查附近的文字。
+接口细节见[影片契约](references/film.md)。

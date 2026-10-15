@@ -23,7 +23,7 @@ function project({ engine = { type: "command", command: [process.execPath, FAKE]
   const data = JSON.parse(fs.readFileSync(file, "utf8"));
   Object.assign(data, {
     voiceover: false,
-    music: { builtin: "pulse", volume: 0.5 },
+    music: { builtin: "pulse", volume: 0.5, why: "engine fixture: the bed only proves the mix is wired" },
     duration: 2,
     fps: 30,
     shots: [{ id: "only", start: 0, end: 2, purpose: "probe the engine", action: "a test pattern slides along a teal floor" }],

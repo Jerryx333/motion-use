@@ -1,3 +1,6 @@
+import { projectTarget, listProjects } from "./projects.mjs";
+import { acquireOutputLock } from "./output-lock.mjs";
+import { createProgress } from "./progress.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -41,6 +44,9 @@ import {
 } from "./film.mjs";
 import { normalizeAudio, verifyVideo, buildNarrationStem } from "./verify.mjs";
 import { generateFilmNarration } from "./film-voiceover.mjs";
+import { composeMusic, evaluateScore, isStarterScore, INSTALL_HINT } from "./compose.mjs";
+import { recordRelease } from "./music-index.mjs";
+import { loadInstruments, packDir, packInstalled, PACK_VERSION } from "./sampler.mjs";
 import { breakdownVideo } from "./breakdown.mjs";
 import { audioText } from "./breakdown-audio.mjs";
 import { fetchReference } from "./reference.mjs";
@@ -70,7 +76,8 @@ const HELP = `motion-use ${VERSION} — directed films, exact-time animation, lo
 
 Usage: motion-use <command> [options]
 
-  init [dir]          Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
+  list                List projects under ~/motion-use (override: MOTION_USE_PROJECTS)
+  init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
                       --mode template keeps the scene-template workflow; --style/--story also select it
   validate [brief]    Check a brief: fields, files, voiceover lengths, characters the fonts cannot draw
@@ -103,6 +110,10 @@ Usage: motion-use <command> [options]
   concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
   geo <json|world|china-provinces> Project/simplify map data (--out <new.json>); builtins include provenance
   retime [film]       Propose shot windows from actual narration (shot.duration: "narration", tail); --out JSON
+  music [film]        Play the film's own score (composition/score.js) into a WAV without rendering picture:
+                      why, key, tempo, instruments, notes per shot and score warnings (--lang, --out file.wav)
+  instruments [list|install]  The recorded instrument pack the scores play (CC0); install fetches it
+                      (--from <tarball> installs a local copy)
   handoff [film]      Export declared sources, separate audio, SRT, shot timeline and provenance hashes
                       (--out <fresh-dir>; --check --out <package> verifies exported bytes)
   doctor              Check Node, ffmpeg, Chrome and the bundled engine (--install-browser fetches Chrome)
@@ -119,6 +130,7 @@ Options for still/render:
   --allow-custom-html Render "html" scenes (custom code; only for briefs you trust)
   --allow-code       Render authored film code (only projects you wrote or trust)
   --no-normalize     Keep original audio levels (default: two-pass -14 LUFS / -1 dBTP)
+  --progress <mode>   Phase/frame progress on stderr: text, json or none (default none)
   --gate              render: fail on a flagged narration line or text running off the frame
                       (reading-time and contrast notes stay warnings)
   --no-asr            render: skip the narration transcription check (--asr-model small|medium|large-v3)
@@ -155,6 +167,7 @@ export async function main(argv) {
     return (console.log(VERSION), 0);
   const commands = {
     init,
+    list: listProjectsCmd,
     validate,
     voiceover,
     still,
@@ -169,6 +182,8 @@ export async function main(argv) {
     study: studyCmd,
     handoff: handoffCmd,
     retime: retimeCmd,
+    music: musicCmd,
+    instruments: instrumentsCmd,
     geo: geoCmd,
     concat: concatCmd,
     doctor,
@@ -176,6 +191,8 @@ export async function main(argv) {
   };
   if (!Object.hasOwn(commands, cmd))
     return fail(`unknown command "${cmd}". Run motion-use --help`);
+  if (rest.slice(0, rest.indexOf("--") < 0 ? rest.length : rest.indexOf("--")).some((x) => x === "--help" || x === "-h"))
+    return (console.log(`motion-use ${cmd} — see command and options below\n\n${HELP}`), 0);
   let args;
   try {
     args = parseArgs({
@@ -198,6 +215,7 @@ export async function main(argv) {
         music: { type: "string", multiple: true },
         at: { type: "string" },
         quality: { type: "string" },
+        progress: { type: "string" },
         engine: { type: "string" },
         "max-size": { type: "string" },
         target: { type: "string" },
@@ -252,12 +270,29 @@ export async function main(argv) {
     return fail("--workers takes a whole number from 1 to 32", args.values.json);
   if (args.values.renderer !== undefined && !["auto", "native", "chrome"].includes(args.values.renderer))
     return fail("--renderer must be auto, native or chrome", args.values.json);
+  if (args.values.progress !== undefined && !["text", "json", "none"].includes(args.values.progress))
+    return fail("--progress must be text, json or none", args.values.json);
   if (cmd !== "upgrade") await maybeNotify(VERSION);
+  let unlock;
+  const progress = createProgress(args.values.progress);
+  args.values._progress = progress;
   try {
-    return await commands[cmd](args.values, args.positionals);
+    if (["render", "still"].includes(cmd)) {
+      const project = resolveProject(args.positionals[0]);
+      if (isFilm(project) && !args.values["allow-code"])
+        return fail("this film executes authored drawing code; pass --allow-code only for a project you wrote or trust", args.values.json);
+      unlock = acquireOutputLock(path.resolve(args.values.out ?? path.join(path.dirname(project), "out")));
+    }
+    progress("command", "start");
+    const code = await commands[cmd](args.values, args.positionals);
+    progress("command", code ? "error" : "finish");
+    return code;
   } catch (e) {
+    progress("command", "error");
     if (e instanceof BriefError) return fail(e.message, args.values.json);
     return fail(e.message, args.values.json);
+  } finally {
+    unlock?.();
   }
 }
 
@@ -293,7 +328,9 @@ const STORIES = [
   "walkthrough",
 ];
 
-async function init(o, [dir = "."]) {
+async function init(o, [input]) {
+  const dir = projectTarget(input ?? o.name ?? "film");
+  if (!o.name && input && !input.includes("/") && !input.includes("\\") && input !== "." && input !== "..") o.name=input;
   if (o.mode && !["film", "template"].includes(o.mode))
     return fail("--mode must be film or template", o.json);
   if (o.mode === "film" || (!o.mode && !o.story && !o.style)) {
@@ -525,7 +562,9 @@ async function validate(o, [briefPath]) {
 }
 
 async function each(briefPath, o, fn) {
+  o._progress?.("validate", "start");
   const c = check(briefPath, o);
+  o._progress?.("validate", c.ok ? "finish" : "error");
   if (!c.film && (o["no-captions"] || o["no-bgm"]))
     return { code: fail("--no-captions/--no-bgm require an authored film", o.json) };
   if (!c.ok) {
@@ -569,8 +608,9 @@ async function each(briefPath, o, fn) {
   for (const l of c.langs)
     for (const f of c.formats) {
       const id = `${c.brief.name}-${l}-${f}${o["no-captions"] ? "-no-captions" : ""}${o["no-bgm"] ? "-no-bgm" : ""}`;
+      o._progress?.("build", "start", { lang: l, format: f });
       const proj = c.film
-        ? await buildFilm(c.film, l, f, path.join(out, ".build", id), { range: o.range, guides: Boolean(o.guides) && !o._render, noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) })
+        ? await buildFilm(c.film, l, f, path.join(out, ".build", id), { range: o.range, guides: Boolean(o.guides) && !o._render, noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), progress: o._progress })
         : await buildProject(c.brief, l, f, path.join(out, ".build", id));
       if (!c.film) {
         proj.narrationTracks = proj.scenes
@@ -595,6 +635,7 @@ async function each(briefPath, o, fn) {
             proj.narrationStem,
           );
       }
+      o._progress?.("build", "finish", { lang: l, format: f });
       results.push(await fn(proj, id, out, c.brief));
     }
   return {
@@ -654,6 +695,13 @@ async function render(o, [briefPath]) {
       return fail("--release makes full-quality masters; drop --max-size/--target (render a small README copy separately)", o.json);
     if (o.quality && o.quality !== "high") return fail("--release always renders at --quality high", o.json);
     if (o.from !== undefined || o.to !== undefined) return fail("--release renders the whole film; drop --from/--to", o.json);
+    if (isFilm(briefPath)) {
+      const m = JSON.parse(fs.readFileSync(resolveProject(briefPath), "utf8")).music;
+      if (m === "builtin" || (m && typeof m === "object" && m.builtin !== undefined && !m.why))
+        return fail('--release: the music is a built-in bed that every film of this mood shares. Write composition/score.js for this film ("music": {"score": "composition/score.js"}), or record why the bed is right in music.why', o.json);
+      if (m?.score && fs.existsSync(path.resolve(path.dirname(resolveProject(briefPath)), m.score)) && isStarterScore(path.resolve(path.dirname(resolveProject(briefPath)), m.score)))
+        return fail("--release: composition/score.js is still the starter score every new film begins with; write this film's own music first", o.json);
+    }
   }
   const QUALITY = { draft: "draft", standard: "looks", high: "delivery" };
   const q = o.release ? "high" : (o.quality ?? "standard");
@@ -697,12 +745,14 @@ async function render(o, [briefPath]) {
       else printReport(c.report);
       return 1;
     }
+    o._progress?.("narration", "start");
     const generated = o.range ? { rows: [] } : await generateFilmNarration(c.film, {
       langs: c.langs,
       engine: o.engine,
       wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
     });
+    o._progress?.("narration", "finish");
     const failed = generated.rows.filter((r) => r.status === "error");
     if (failed.length)
       return fail(
@@ -778,7 +828,9 @@ async function render(o, [briefPath]) {
   // Narration check: what speech recognition hears against each script line.
   let narrationCheck = null;
   if (!o.range && !o["no-asr"]) {
+    o._progress?.("narration_check", "start");
     narrationCheck = runNarrationCheck(briefPath, o);
+    o._progress?.("narration_check", "finish");
     const quiet = narrationCheck.skipped && !narrationCheck.lines.length && narrationCheck.skipped.startsWith("no generated");
     if (!o.json && !quiet) for (const line of describeNarration(narrationCheck)) console.error(`warning: ${line}`);
     if (o.gate && !narrationCheck.skipped && !narrationCheck.ok)
@@ -842,13 +894,18 @@ async function render(o, [briefPath]) {
           return { ok: false, id, error: hf.out.trim().split("\n").slice(-15).join("\n") };
         fs.mkdirSync(path.dirname(previewFile), { recursive: true });
         commitOutput(out, tmpPreview, previewFile);
-        let motion = null;
+        let motion = null, previewReport = null;
         try {
-          const m = measureMotion(previewFile);
-          motion = { level: gradeMotion(m).level, fast_ratio: m.fast_ratio, blank_run_s: m.blank_run_s, blue_purple_share: m.blue_purple_share };
-        } catch {}
+          const shots = brief.shots?.map((s)=>({id:s.id,start:Math.max(0,s.start-from),end:Math.min(to-from,s.end-from)})).filter((s)=>s.end>s.start) ?? [];
+          const m = measureMotion(previewFile,{shots,cuts:shots.slice(1).map((s)=>s.start)});
+          motion = { ...m, level: gradeMotion(m).level };
+          const review = path.join(out,"review",id,`preview-${from}-${to}`);
+          claimDir(review);
+          previewReport = path.join(review,"report.json");
+          fs.writeFileSync(previewReport,JSON.stringify({file:previewFile,preview:true,from,to,motion},null,2)+"\n");
+        } catch(e) { motion = {skipped:`motion analysis failed: ${e.message}`}; }
         if (!o.json) console.log(previewFile);
-        return { ok: true, id, preview: true, file: previewFile, from, to, motion, renderer: usedRenderer(brief, o) };
+        return { ok: true, id, preview: true, file: previewFile, from, to, motion, report:previewReport, renderer: usedRenderer(brief, o) };
       }
       const file = path.join(
         q === "draft" ? path.join(out, "preview") : out,
@@ -859,7 +916,9 @@ async function render(o, [briefPath]) {
       // Text check before capture: measured boxes of every drawn string against the frame.
       let textCheck = null;
       if (proj.film && !o["no-text-check"]) {
+        o._progress?.("text_check", "start", { lang: proj.lang, format: proj.format });
         textCheck = await filmTextCheck(proj, brief, o);
+        o._progress?.("text_check", "finish");
         if (!o.json) for (const line of describeText(textCheck)) console.error(`warning: ${id}: ${line}`);
         const off = textCheck.runs?.filter((x) => x.kind === "frame" || x.kind === "collision") ?? [];
         if (o.gate && off.length)
@@ -871,6 +930,7 @@ async function render(o, [briefPath]) {
         console.error(`rendering ${id} (${proj.total.toFixed(1)}s${proj.film ? `, ${usedRenderer(brief, o)} renderer` : ""})…`);
       const canvasFailure = await filmCanvasCheck(proj, brief, o, id);
       if (canvasFailure) return canvasFailure;
+      o._progress?.("capture_encode", "start", { lang: proj.lang, format: proj.format });
       let hf = null;
       if (proj.film && !brief.engine && pickRenderer(brief, o).renderer === "native") {
         hf = await nativeRender(proj, tmp, { ...o, quality, crf: o.release ? 10 : undefined }, o._picked);
@@ -896,6 +956,7 @@ async function render(o, [briefPath]) {
             ].filter(Boolean),
             {},
           );
+      o._progress?.("capture_encode", hf.code ? "error" : "finish");
       const ok =
         hf.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0;
       if (!ok)
@@ -904,19 +965,23 @@ async function render(o, [briefPath]) {
           id,
           error: hf.out.trim().split("\n").slice(-15).join("\n"),
         };
+      o._progress?.("normalize", "start");
       let normalization = { applied: false, reason: "disabled" };
       if (!o["no-normalize"]) {
         const norm = path.join(proj.dir, "normalized.mp4");
         normalization = normalizeAudio(tmp, norm);
         if (normalization.applied) fs.renameSync(norm, tmp);
       }
+      o._progress?.("normalize", "finish");
       let fitted = null;
       if (maxBytes && fs.statSync(tmp).size > maxBytes) {
         fitted = fitSize(tmp, maxBytes, proj.dir);
         if (!fitted.ok) return { ok: false, id, error: fitted.error };
       }
       const bytes = fs.statSync(tmp).size;
+      o._progress?.("verification", "start");
       const verification = verifyVideo(tmp, path.join(out, "review", id), {
+        progress: o._progress,
         expected: {
           duration: proj.total,
           fps: proj.fps,
@@ -947,6 +1012,7 @@ async function render(o, [briefPath]) {
             o["allow-blue-purple"] ?? brief.look?.allowBluePurple ?? null,
         },
       });
+      o._progress?.("verification", verification.ok ? "finish" : "error");
       if (!verification.ok && q !== "draft")
         return {
           ok: false,
@@ -1028,8 +1094,10 @@ async function render(o, [briefPath]) {
       // Release: platform masters encoded from the near-lossless render, each hashed.
       let release = null;
       if (o.release) {
+        o._progress?.("release_encode", "start");
         try {
           release = makeRelease({ out, proj, id, file, cover, seconds: verification.observed.seconds, force: o.force, renderer: verification.renderer, log: o.json ? () => {} : (m) => console.error(m) });
+          o._progress?.("release_encode", "finish");
         } catch (e) {
           return { ok: false, id, file, error: `release masters: ${e.message}` };
         }
@@ -1098,6 +1166,17 @@ async function render(o, [briefPath]) {
       film: filmFile ? { file: filmFile, sha256: sha(filmFile) } : null,
     });
     if (!o.json) console.log(releaseManifest);
+    if (filmFile)
+      try {
+        const c = checkFilm(filmFile, {});
+        const lang = c.film.languages?.[0];
+        const voice = c.film.tracks.filter((a) => a.role === "voiceover" && (!a.lang || a.lang === lang)).map((a) => ({ start: a.start, end: a.start + a.length }));
+        const score = c.film.scoreFile ? evaluateScore(c.film, lang, voice).score : null;
+        r.warnings = [...(r.warnings ?? []), ...recordRelease(filmFile, c.film, score)];
+        for (const w of r.warnings.slice(-3)) if (!o.json && /^music /.test(w)) console.error(`warning: ${w}`);
+      } catch (e) {
+        console.error(`warning: music index not updated: ${e.message}`);
+      }
   }
   if (o.json && r.results)
     console.log(
@@ -1129,7 +1208,9 @@ function makeRelease({ out, proj, id, file, cover, seconds, force, renderer, log
       blocked = guardOutput(out, final, force);
     if (blocked) throw new Error(blocked);
     const tmp = path.join(proj.dir, `release-${name}`);
+    log(`release file start: ${name}`);
     make(tmp);
+    log(`release file finish: ${name}`);
     commitOutput(out, tmp, final);
     entries.push(releaseEntry(relDir, name, { ...extra, ...meta }));
     return entries.at(-1);
@@ -1208,11 +1289,11 @@ async function filmTextCheck(proj, brief, o) {
   if (brief.engine && !brief.source) return ENGINE_TEXT;
   const pick = pickRenderer(brief, o);
   if (pick.renderer === "native") {
-    const r = await probeText(proj.dir, proj.total, { native: pick });
+    const r = await probeText(proj.dir, proj.total, { native: pick, ranges:o._textRanges });
     if (!r.skipped || !unsupportedContext(r.skipped)) return r;
     fallBack(o, r.skipped);
   }
-  return probeText(proj.dir, proj.total);
+  return probeText(proj.dir, proj.total, { ranges:o._textRanges });
 }
 
 /**
@@ -1229,7 +1310,7 @@ async function nativeRender(proj, file, o, pick) {
       return { code: 1, out: e.message };
     }
   }
-  return streamRender({ bin: pick.bin, proj, file, audio, quality: o.quality, crf: o.crf, workers: nativeWorkers(o) });
+  return streamRender({ onProgress: (frames, total) => o._progress?.("capture_encode", "progress", { frames, total }), bin: pick.bin, proj, file, audio, quality: o.quality, crf: o.crf, workers: nativeWorkers(o) });
 }
 
 /** The cut's mix as a WAV for an engine film (none for a silent preview). */
@@ -1480,13 +1561,13 @@ async function voiceover(o, [briefPath, ...rest]) {
             ok,
             engine: res.engine,
             files: res.rows.map((row) => {
-              const track = post.film.tracks.find((a) => a.id === row.scene && a.lang === row.lang && a.role === "voiceover");
+              const track = row.status !== "error" && post.film.tracks.find((a) => a.id === row.scene && a.lang === row.lang && a.role === "voiceover");
               const window = post.film.narrationPlans.find((p) => p.id === row.scene);
               return { ...row, ...(track ? { file: track.file, format: path.extname(track.file).slice(1), seconds: track.length,
                 window: window ? { start: window.start, end: window.end } : null,
                 fits: window ? track.length <= window.end - window.start + 0.02 : null } : {}) };
             }),
-            errors: post.report.errors,
+            errors: [...post.report.errors, ...res.rows.filter((r) => r.status === "error").map((r) => ({ path: `$.voiceover.${r.lang}.${r.scene}`, message: r.error }))],
           },
           null,
           2,
@@ -1502,7 +1583,7 @@ async function voiceover(o, [briefPath, ...rest]) {
     return ok ? 0 : 1;
   }
   // The folder may not exist yet on a first run: create it so validation passes.
-  const { data, dir } = readBrief(briefPath ?? "brief.json");
+  const { data, dir } = readBrief(resolveProject(briefPath));
   if (typeof data?.voiceover?.dir === "string")
     fs.mkdirSync(path.resolve(dir, data.voiceover.dir), { recursive: true });
   const { brief, errors, warnings } = validateBrief(data, dir);
@@ -1530,7 +1611,7 @@ async function voiceover(o, [briefPath, ...rest]) {
   if (o.json)
     console.log(
       JSON.stringify(
-        { ok: failed.length === 0, engine: res.engine, files: res.rows },
+        { ok: failed.length === 0, engine: res.engine, files: res.rows, errors: failed.map((r) => ({ scene: r.scene, lang: r.lang, message: r.error })) },
         null,
         2,
       ),
@@ -1699,13 +1780,14 @@ async function still(o, [briefPath]) {
       console.log(sheet ?? `${dir} (contact sheet not created)`);
       for (let i = 0; i < pngs.length; i++) console.log(`  ${times[i].toFixed(3)}s ${proj.scenes.find((s) => times[i] >= s.start && times[i] < s.start + s.duration)?.id ?? "frame"}: ${pngs[i]}`);
     }
-    // Text check over the whole film, not only the sampled frames.
+    // Explicit still selections inspect only those shots/time neighborhoods.
     let text = null;
     if (proj.film && !o["no-text-check"] && !proj.range) {
-      text = await filmTextCheck(proj, brief, o);
+      const ranges = shotIds ? proj.scenes.filter((s)=>shotIds.includes(s.id)).map((s)=>[s.start-0.3,s.start+s.duration+0.3]) : at ? times.map((t)=>[t-0.5,t+0.5]) : null;
+      text = await filmTextCheck(proj, brief, {...o,_textRanges:ranges});
       if (!o.json) for (const line of describeText(text)) console.error(`warning: ${id}: ${line}`);
     }
-    return { ok: true, id, frames: pngs, sheet, at: times, renderer: usedRenderer(brief, o), ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs } } : {}) };
+    return { ok: true, id, frames: pngs, sheet, at: times, renderer: usedRenderer(brief, o), ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs, scope:text.scope, samples:text.samples } } : {}) };
   });
   if (o.json && r.results)
     console.log(
@@ -2170,4 +2252,91 @@ async function concatCmd(o,[file,...extra]) {
   if(!file||extra.length)return fail("concat <parts.json> --out <fresh-dir> [--release]",o.json);
   const r=concatParts(file,{...o,version:VERSION});
   console.log(o.json?JSON.stringify(r,null,2):`${r.file}\n${r.report}${r.release_manifest?`\n${r.release_manifest}`:""}`);return r.ok?0:1;
+}
+
+async function musicCmd(o, [input, ...extra]) {
+  if (extra.length) return fail("music [film] --allow-code [--lang zh] [--out music.wav]", o.json);
+  const c = checkFilm(input ?? ".", o);
+  if (!c.ok) return fail(c.report.errors.map((e) => `${e.path}: ${e.message}`).join("\n"), o.json);
+  const film = c.film;
+  if (!film.scoreFile)
+    return fail('this film has no score: write composition/score.js and set "music": {"score": "composition/score.js"}', o.json);
+  if (!o["allow-code"]) return fail("the score is code: pass --allow-code only for a project you wrote or trust", o.json);
+  const lang = c.langs[0] ?? film.languages?.[0];
+  const voice = film.tracks
+    .filter((a) => a.role === "voiceover" && (!a.lang || a.lang === lang))
+    .map((a) => ({ start: a.start, end: a.start + a.length }));
+  const r = composeMusic(film, lang, voice);
+  const out = path.resolve(o.out ?? path.join(c.dir, "out", `music-${lang ?? "film"}.wav`));
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, r.wav);
+  const perShot = film.shots.map((s) => ({ shot: s.id, notes: r.score.events.filter((e) => e.t >= s.start && e.t < s.end).length }));
+  const summary = {
+    ok: true,
+    file: out,
+    why: r.score.why,
+    key: r.score.key,
+    tempo: r.score.tempo,
+    instruments: [...new Set(r.score.events.map((e) => e.instrument))].sort(),
+    notes: r.score.events.length,
+    per_shot: perShot,
+    warnings: r.problems.map((p) => p.message),
+    cached: r.cached,
+  };
+  if (o.json) console.log(JSON.stringify(summary, null, 2));
+  else {
+    console.log(`${out}\n${summary.why}\n${summary.key ?? "no key"} · ${summary.tempo} bpm · ${summary.notes} notes · ${summary.instruments.join(", ")}`);
+    console.log(perShot.map((p) => `  ${p.shot}: ${p.notes}`).join("\n"));
+    for (const w of summary.warnings) console.log(`warning: ${w}`);
+  }
+  return 0;
+}
+
+const PACK_URL = `https://github.com/leeguooooo/motion-use/releases/download/instruments-v${PACK_VERSION}/motion-use-instruments-${PACK_VERSION}.tar.gz`;
+
+async function instrumentsCmd(o, [action = "list", ...extra]) {
+  if (extra.length || !["list", "install"].includes(action))
+    return fail("instruments [list|install] [--from <tarball>]", o.json);
+  if (action === "install") {
+    const dest = packDir();
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const tmp = fs.mkdtempSync(path.join(path.dirname(dest), ".install-"));
+    try {
+      let tarball = o.from;
+      if (!tarball) {
+        tarball = path.join(tmp, "pack.tar.gz");
+        execFileSync("curl", ["-fsSL", "-o", tarball, PACK_URL], { stdio: "inherit" });
+        const want = execFileSync("curl", ["-fsSL", `${PACK_URL}.sha256`], { encoding: "utf8" }).trim().split(/\s+/)[0];
+        const got = crypto.createHash("sha256").update(fs.readFileSync(tarball)).digest("hex");
+        if (want !== got) return fail(`downloaded pack does not match its checksum (${got} ≠ ${want})`, o.json);
+      }
+      const stage = path.join(tmp, "pack");
+      fs.mkdirSync(stage);
+      execFileSync("tar", ["-xzf", path.resolve(tarball), "-C", stage]);
+      const manifest = JSON.parse(fs.readFileSync(path.join(stage, "manifest.json"), "utf8"));
+      if (manifest.version !== PACK_VERSION)
+        return fail(`this motion-use plays pack ${PACK_VERSION}; ${tarball} is ${manifest.version}`, o.json);
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.renameSync(stage, dest);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  const all = loadInstruments();
+  const list = Object.entries(all).map(([name, v]) => ({ name, label: v.label, family: v.family, synth: Boolean(v.synth), range: v.pitched ? v.range : undefined, hits: v.pitched ? undefined : Object.keys(v.hits ?? {}), maxDur: v.maxDur ?? undefined }));
+  const r = { ok: true, pack: packInstalled() ? packDir() : null, version: PACK_VERSION, instruments: list };
+  if (o.json) console.log(JSON.stringify(r, null, 2));
+  else {
+    console.log(r.pack ? `pack ${PACK_VERSION}: ${r.pack}` : `no recorded instruments yet (${INSTALL_HINT}); synthesized voices only`);
+    for (const i of list) console.log(`  ${i.name.padEnd(16)} ${String(i.family).padEnd(8)} ${i.range ? i.range.join("–") : (i.hits ?? []).join("/")}${i.maxDur ? ` · ≤${i.maxDur}s` : ""}${i.synth ? " · synthesized" : ""}`);
+  }
+  return 0;
+}
+
+async function listProjectsCmd(o, args) {
+  if(args.length) return fail("list takes no positional arguments",o.json);
+  const result=listProjects();
+  if(o.json) console.log(JSON.stringify({ok:true,...result},null,2));
+  else {console.log(result.root);for(const p of result.projects) console.log(`${p.name??p.dir}  ${p.duration??"?"}s  ${p.release ? `${p.release.created??"?"} ${p.release.file}${p.release.exists?"":" (missing)"}` : "no release"}`);}
+  return 0;
 }

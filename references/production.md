@@ -2,6 +2,36 @@
 
 Use this alongside [directing.md](directing.md) and the [film contract](film.md). The renderer owns exact time, packaging and measured checks. The agent owns the subject, visual argument and choice of technique.
 
+## Review the script before production
+
+For a new film, write SCRIPT.md before authoring film.json, drawing code, speech or music.
+Init creates scaffolds; those files are not an approved plan. Include audience/takeaway,
+opening frame, first line, shot IDs, source-backed actions, spoken copy, displayed copy,
+screen text, intended windows and ending action. Existing user-approved copy counts as reviewed.
+
+Review four stages in order; fix a revise result before proceeding:
+
+| Stage | Reviewer receives | Record | Check |
+|---|---|---|---|
+| Script | SCRIPT.md and claim/source excerpts only | reviews/01-script.md | Concrete opening that earns attention; no unsupported claims, filler, abstract nouns in place of actions, repeated three-part patterns or forced slogans; each line matches a visible change; speech/reading budget; ending action |
+| Storyboard | One selected keyframe per shot, copy and intended takeaway | reviews/02-storyboard.md | Composition, scale, subtitle placement, labels over the subject |
+| Rhythm | Only the draft ranges whose timing is in question | reviews/03-rhythm.md | Holds, transitions, camera moves, readability and speech synchronization |
+| Final | MP4, contact sheet, takeaway and unresolved notes | reviews/04-final.md | Continuity, technical defects and remaining detail; reopen earlier stages if their content changed |
+
+Every record says pass/revise and names exact lines, shots or timecodes to change.
+Use a fresh reviewer when available; do not repeatedly give a text reviewer the full video
+or entire source repository. Mechanical checks do not establish an engaging opening.
+Approval here is a review result, not an extra user confirmation requirement.
+
+## Obtain real source material
+
+First check the product for screenshot tests, a headless renderer, Storybook, deterministic
+fixtures or an existing capture command. These can produce real UI frames at repeatable
+sizes without taking over the user's display. Preserve the product version, fixture and
+capture command with the footage. Use a local PNG image sequence directly in `videos`
+instead of encoding an intermediate MP4 and extracting JPEGs. Use actual recordings where
+live behavior matters; label diagrams and fabricated UI as illustrations.
+
 ## Compare directions cheaply
 
 When the direction is open, propose three different approaches to the same facts:
