@@ -14,15 +14,15 @@ import { demoSimilarity } from "../src/motion-check.mjs";
 const stubCanvas = () => {
   const calls = [];
   const ctx = new Proxy(
-    { calls, measureText: (s) => ({ width: String(s).length * 10 }), createPattern: () => ({}), createRadialGradient: () => ({ addColorStop() {} }) },
+    { calls, globalAlpha: 1, measureText: (s) => ({ width: String(s).length * 10 }), createPattern: () => ({}), createRadialGradient: () => ({ addColorStop() {} }) },
     { get: (o, k) => (k in o ? o[k] : (...a) => calls.push([k, ...a])), set: (o, k, v) => ((o[k] = v), true) },
   );
   return ctx;
 };
-const kit = (film = {}) => {
+const kit = (film = {}, view = { width: 1920, height: 1080 }) => {
   const ctx = { window: {} };
   vm.runInNewContext(fs.readFileSync(new URL("../src/film-kit.js", import.meta.url), "utf8"), ctx);
-  return ctx.window.__filmKit({ width: 1920, height: 1080 }, film);
+  return ctx.window.__filmKit(view, film);
 };
 
 test("subtitle cues come from the voice service's SRT, or are estimated per sentence", () => {
@@ -212,4 +212,46 @@ test("springZeta: closed-form progress by damping ratio; zeta 1 never overshoots
   // continuous across the critical point
   assert.ok(Math.abs(M.springZeta(0.3, 1) - M.springZeta(0.3, 0.999999)) < 1e-4);
   assert.ok(Math.abs(M.springZeta(0.3, 1) - M.springZeta(0.3, 1.000001)) < 1e-4);
+});
+
+
+test("text plates, punches and tags respect their window and are deterministic", () => {
+  const k = kit();
+  for (const name of ["plate", "punch", "tag"]) {
+    for (const t of [0.9, 3, 3.1]) {
+      const c = stubCanvas();
+      k[name](c, t, "下一班 3 分钟", 1, 3);
+      assert.equal(c.calls.length, 0, `${name} hidden at ${t}`);
+    }
+    for (const t of [1.1, 2, 2.9]) {
+      const a = stubCanvas(), b = stubCanvas();
+      k[name](a, t, "下一班 3 分钟", 1, 3);
+      k[name](b, t, "下一班 3 分钟", 1, 3);
+      assert.ok(a.calls.some(([name]) => name === "fillText"));
+      assert.deepEqual(a.calls, b.calls);
+    }
+  }
+});
+
+test("plate digits use the accent at 1.32 times the base font size and long plates fit", () => {
+  const k = kit({ look: { palette: "paper" } }), c = stubCanvas(), drawn = [];
+  c.fillText = (text) => drawn.push({ text, color: c.fillStyle, font: c.font });
+  k.plate(c, 1, "下一班 3 分钟", 0, 3, { size: 50, maxWidth: 100 });
+  assert.deepEqual(drawn.map((r) => [r.text, r.color, parseFloat(r.font.split(" ")[1])]), [["下一班 ", "#1B1A17", 50], ["3", "#C8402F", 66], [" 分钟", "#1B1A17", 50]]);
+  assert.ok(c.calls.some(([name, x, y]) => name === "scale" && x < 1 && x === y));
+});
+
+test("portrait text helpers centre on the safe column and keep their default bounds inside it", () => {
+  const view = { width: 1080, height: 1920, vertical: true, safe: { x: 64.8, y: 192, w: 864, h: 1267.2 } }, k = kit({}, view);
+  for (const name of ["plate", "punch", "tag"]) {
+    const c = stubCanvas();
+    k[name](c, 0.01, "A long title ".repeat(20), 0, 3);
+    const [, x, y] = c.calls.find(([name]) => name === "translate"),
+      [, , , w, h] = c.calls.find(([name]) => name === "roundRect"),
+      [, scale] = c.calls.find(([name]) => name === "scale");
+    assert.equal(x, view.safe.x + view.safe.w / 2);
+    assert.ok(w * scale <= view.safe.w);
+    assert.ok(y - h * scale / 2 >= view.safe.y);
+    assert.ok(y + h * scale / 2 <= view.safe.y + view.safe.h);
+  }
 });

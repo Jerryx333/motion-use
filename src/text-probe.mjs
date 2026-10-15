@@ -242,6 +242,17 @@ export function readingRuns(samples, { width = Infinity, height = Infinity, alph
   return runs.sort((a, b) => a.from - b.from);
 }
 
+// Compare every layer to the last draw, so a chain of offsets cannot merge distant labels.
+const EXTRUSION_OFFSET_EM = 0.25;
+function contrastLayers(boxes) {
+  const top = [];
+  for (const b of boxes.map((b, i) => ({ ...b, order: b.order ?? i })).sort((a, b) => b.order - a.order)) {
+    if (top.some((a) => a.text === b.text && a.size > 0 && a.size === b.size && Math.abs(a.x0 - b.x0) <= b.size * EXTRUSION_OFFSET_EM && Math.abs(a.y0 - b.y0) <= b.size * EXTRUSION_OFFSET_EM)) continue;
+    top.push(b);
+  }
+  return top.reverse();
+}
+
 /**
  * Text against what is drawn under it, for at least `minRun` seconds while fully shown: WCAG
  * contrast under 4.5:1, or 3:1 for large text (≥ 24 px, or ≥ 18.66 px at weight 700+, in frame
@@ -260,7 +271,7 @@ export function contrastRuns(samples, { step = 0.1, minRun = 0.3, alpha = 0.9 } 
   };
   for (const s of samples) {
     const seen = new Set();
-    for (const b of s.boxes) {
+    for (const b of contrastLayers(s.boxes)) {
       if (b.contrast === undefined || (b.alpha ?? 1) < alpha) continue;
       const need = b.large ? 3 : 4.5;
       if (b.contrast >= need || seen.has(b.text)) continue;

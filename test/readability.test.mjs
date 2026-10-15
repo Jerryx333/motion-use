@@ -8,6 +8,7 @@ import { contrastRuns, describeText, probeText, readingRuns, readingSeconds } fr
 import { measureMotion, gradeMotion } from "../src/motion-check.mjs";
 import { initFilm, checkFilm, buildFilm, validateFilm } from "../src/film.mjs";
 import { runHyperframes } from "../src/hf.mjs";
+import { findRenderer, nativeProbe } from "../src/native.mjs";
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "mu-read-"));
 const box = (text, x0, y0, x1, y1, extra = {}) => ({ text, x0, y0, x1, y1, alpha: 1, ...extra });
@@ -78,6 +79,22 @@ test("contrast check: low contrast held while fully shown is flagged; fades, lar
   assert.deepEqual(pass, []);
 });
 
+test("contrast check: offset extrusion layers use only the last draw of the same size and string", () => {
+  const layer = (text, dx, color, contrast, size = 60) => box(text, 100 + dx, 100 + dx, 500 + dx, 160 + dx, { size, color, contrast, large: true, backdrop: "#55aa66" });
+  const shadow = (dx) => layer("Impact", dx, "#1a1612", 1.66);
+  const face = layer("Impact", 0, "#ffffff", 4.2);
+  assert.deepEqual(contrastRuns(every(1, () => [shadow(9), shadow(6), shadow(3), face])), []);
+  // A low-contrast top face must be reported instead of the lower layers.
+  const low = contrastRuns(every(1, () => [shadow(9), shadow(6), shadow(3), { ...face, contrast: 2.5 }]));
+  assert.deepEqual(low.map((r) => [r.color, r.contrast]), [["#ffffff", 2.5]]);
+  for (const separate of [layer("Other", 0, "#ffffff", 4.2), { ...face, x0: 116, x1: 516 }, layer("Impact", 0, "#ffffff", 4.2, 61)]) {
+    const runs = contrastRuns(every(1, () => [shadow(0), separate]));
+    assert.deepEqual(runs.map((r) => [r.text, r.color]), [["Impact", "#1a1612"]]);
+  }
+  const both = contrastRuns(every(1, () => [shadow(0), layer("Other", 0, "#333333", 2)]));
+  assert.deepEqual(both.map((r) => r.text), ["Impact", "Other"]);
+});
+
 const make = (dir, name, filter, seconds = 4) => {
   const file = path.join(dir, name);
   execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", filter, "-t", String(seconds), "-pix_fmt", "yuv420p", file]);
@@ -107,7 +124,14 @@ const chrome = async () => {
 };
 
 test("text check on a real film: grey on grey and a 1 s callout are flagged; white on near-black is not", { timeout: 180000 }, async (t) => {
-  if (!(await chrome())) return t.skip("no Chrome for rendering");
+  const renderers = [];
+  if (await chrome()) renderers.push(["chrome", null]);
+  if (process.env.MOTION_RENDER && process.env.MOTION_RENDER !== "0") {
+    const native = findRenderer();
+    assert.ok(native.bin, native.missing);
+    renderers.push(["native", native]);
+  }
+  if (!renderers.length) return t.skip("no Chrome or requested motion-render for rendering");
   const dir = temp();
   initFilm({ lang: "en", format: "landscape" }, dir);
   const file = path.join(dir, "film.json");
@@ -121,18 +145,32 @@ test("text check on a real film: grey on grey and a 1 s callout are flagged; whi
       M.text(c, "White on near black", view.width / 2, 200, 80, "#ffffff", 700, "center");
       c.fillStyle = "#888888"; c.fillRect(200, 400, 900, 160);
       if (t >= 0.4 && t < 2.6) M.text(c, "grey on grey", 260, 480, 60, "#777777", 700, "left");
+      M.punch(c, t, "Extruded white text", 0, 3, { y: 0.62, size: 60, fill: "#30683e", dark: "#1a1612" });
       if (t >= 1 && t < 2) M.text(c, "scan with an iPhone: no address", 300, 800, 40, "#ffffff", 600, "left");
     };`,
   );
   const c = checkFilm(file, {});
   assert.deepEqual(c.report.errors, []);
   const proj = await buildFilm(c.film, "en", "landscape", path.join(dir, "out", ".build", "probe"));
-  const r = await probeText(proj.dir, proj.total);
-  assert.equal(r.skipped, undefined, r.skipped);
-  const low = r.runs.filter((x) => x.kind === "contrast");
-  assert.deepEqual(low.map((x) => [x.text, x.color, x.backdrop, x.need]), [["grey on grey", "#777777", "#888888", 3]], JSON.stringify(r.runs));
-  assert.ok(low[0].contrast < 1.3 && low[0].from <= 0.5 && low[0].to >= 2.4, JSON.stringify(low[0]));
-  const slow = r.runs.filter((x) => x.kind === "reading");
-  assert.deepEqual(slow.map((x) => x.text), ["scan with an iPhone: no address"], JSON.stringify(r.runs));
-  assert.ok(Math.abs(slow[0].seconds - 1) < 0.05 && slow[0].required === 2.3, JSON.stringify(slow[0]));
+  const results = [];
+  for (const [renderer, native] of renderers) await t.test(renderer, async () => {
+    if (native) {
+      const raw = await nativeProbe({ bin: native.bin, projDir: proj.dir, times: [1], work: path.join(proj.dir, ".probe") });
+      const layers = raw.samples[0].boxes.filter((b) => b.text === "Extruded white text");
+      assert.ok(layers.length > 1);
+      assert.ok(layers.every((b) => b.size > 0 && b.size === layers[0].size), JSON.stringify(layers));
+      assert.equal(layers.at(-1).color, "#ffffff");
+    }
+    const r = await probeText(proj.dir, proj.total, { native });
+    assert.equal(r.skipped, undefined, r.skipped);
+    assert.equal(r.renderer, renderer);
+    const low = r.runs.filter((x) => x.kind === "contrast");
+    assert.deepEqual(low.map((x) => [x.text, x.color, x.backdrop, x.need]), [["grey on grey", "#777777", "#888888", 3]], JSON.stringify(r.runs));
+    assert.ok(low[0].contrast < 1.3 && low[0].from <= 0.5 && low[0].to >= 2.4, JSON.stringify(low[0]));
+    const slow = r.runs.filter((x) => x.kind === "reading");
+    assert.deepEqual(slow.map((x) => x.text), ["scan with an iPhone: no address"], JSON.stringify(r.runs));
+    assert.ok(Math.abs(slow[0].seconds - 1) < 0.05 && slow[0].required === 2.3, JSON.stringify(slow[0]));
+    results.push(r.runs);
+  });
+  if (results.length === 2) assert.deepEqual(results[0], results[1], "Chrome and native text checks agree");
 });

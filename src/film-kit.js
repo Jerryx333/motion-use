@@ -66,6 +66,8 @@ window.__filmKit = function (view, film) {
   const slamK = (k, from = 1.55, under = 0.94) =>
     k <= 0 ? from : k < 0.6 ? from - (from - under) * (k / 0.6) : k < 1 ? under + (1 - under) * ((k - 0.6) / 0.4) : 1;
 
+  const slam = (t, at, o = {}) => (t < at ? 0 : slamK((t - at) / (o.dur ?? PULSE.slam), o.from, o.under));
+
   // Pulse camera: hold → a fast push, pan or slam → hold. Each event starts from where the
   // earlier events have brought the camera at time t; the world point (x, y) sits at screen centre.
   function camera(t, events = [], base = {}) {
@@ -497,9 +499,11 @@ window.__filmKit = function (view, film) {
   // Portrait titles default to the platform-safe column (the text check flagged the starter's
   // beat titles reaching under the right-hand action buttons); landscape keeps the full width.
   const portraitSafe = view.vertical && view.safe;
+  const TITLE_RISE = 0.35,
+    TITLE_LEAVE = 0.18;
   function caption(c, t, text, start, end, { y = view.vertical ? 0.16 : 0.15, x = portraitSafe ? (view.safe.x + view.safe.w / 2) / view.width : 0.5, align = "center", size = (view.vertical ? 70 : 88) * unit, color = ink().ink, weight = 800, maxWidth = portraitSafe ? view.safe.w : view.width - (view.vertical ? 140 : 220) * unit, plate = null, lines: maxLines = 1 } = {}) {
-    const enter = easings.expoOut((t - start) / 0.35),
-      exit = easings.expoIn((t - end + 0.18) / 0.18);
+    const enter = easings.expoOut((t - start) / TITLE_RISE),
+      exit = easings.expoIn((t - end + TITLE_LEAVE) / TITLE_LEAVE);
     if (enter <= 0 || exit >= 1 || !text) return;
     c.font = fontOf(weight, size, false);
     // With lines > 1, a line that does not fit wraps (balanced) instead of shrinking. A text that
@@ -534,6 +538,59 @@ window.__filmKit = function (view, film) {
     rows.forEach((row, i) => label(c, row, cx, yy + i * lh, { size, color, weight, maxWidth, align }));
     c.restore();
   }
+  // Caption coordinates are frame fractions; sizes and maximum widths are frame pixels.
+  function title(c, t, text, start, end, kind, { x, y, size = (view.vertical ? 70 : 88) * unit, color = kind === "punch" ? "#FFFFFF" : ink().ink, accent = ink().accent, fill = kind === "punch" ? accent : "#FFFFFF", dark = ink().ink, maxWidth = portraitSafe ? view.safe.w : view.width - 220 * unit, rotate = kind === "punch" ? -0.045 : 0 } = {}) {
+    const enter = easings.expoOut((t - start) / TITLE_RISE),
+      exit = easings.expoIn((t - end + TITLE_LEAVE) / TITLE_LEAVE);
+    if (enter <= 0 || exit >= 1 || !text) return;
+    c.save();
+    const runs = (String(text).match(kind === "plate" ? /\d+|[^\d]+/g : /[\s\S]+/g) || []).map((text) => {
+      const digit = kind === "plate" && /^\d+$/.test(text),
+        px = digit ? size * 1.32 : size;
+      c.font = fontOf(900, px, false);
+      return { text, digit, size: px, width: c.measureText(text).width };
+    });
+    const content = runs.reduce((sum, run) => sum + run.width, 0),
+      w = content + size * (kind === "tag" ? 1.1 : 0.9), h = size * 1.62,
+      depth = kind === "punch" ? size * 0.14 : 0,
+      cos = Math.abs(Math.cos(rotate)), sin = Math.abs(Math.sin(rotate)),
+      bw = (w + 2 * depth) * cos + (h + 2 * depth) * sin,
+      bh = (h + 2 * depth) * cos + (w + 2 * depth) * sin,
+      fit = Math.min(1, maxWidth / bw, portraitSafe ? view.safe.h / bh : 1),
+      scale = fit * (kind === "punch" ? slam(t, start, { dur: TITLE_RISE }) : 1),
+      // Keep the default pose, including the tilted slam overshoot, inside the safe area.
+      safeFit = portraitSafe ? Math.min(1, view.safe.w / (bw * scale), view.safe.h / (bh * scale)) : 1,
+      zoom = scale * safeFit,
+      cx = (x ?? (portraitSafe ? (view.safe.x + view.safe.w / 2) / view.width : 0.5)) * view.width,
+      yy = (y ?? (view.vertical ? 0.16 : 0.15)) * view.height + (kind === "punch" ? 0 : (1 - enter) * size * 1.2) - exit * size * 1.2,
+      cy = y === undefined && portraitSafe ? Math.max(view.safe.y + bh * zoom / 2, Math.min(view.safe.y + view.safe.h - bh * zoom / 2, yy)) : yy;
+    c.globalAlpha *= (1 - exit) * (kind === "punch" ? 1 : enter);
+    c.translate(cx, cy);
+    c.rotate(rotate);
+    c.scale(zoom, zoom);
+    if (kind === "punch") rounded(c, -w / 2 + depth, -h / 2 + depth, w, h, size * 0.16, dark);
+    else {
+      c.shadowColor = "rgba(0,0,0,.25)";
+      c.shadowBlur = size * 0.3;
+      c.shadowOffsetY = size * 0.12;
+    }
+    rounded(c, -w / 2, -h / 2, w, h, size * (kind === "punch" ? 0.16 : 0.26), fill);
+    c.shadowColor = "transparent";
+    let left = -content / 2;
+    for (const run of runs) {
+      const rx = left + run.width / 2, ry = run.digit ? run.size * 0.04 : 0;
+      if (kind === "punch")
+        for (let k = size * 0.1; k > 0; k -= size / 60) label(c, run.text, rx + k, ry + k, { size: run.size, color: dark, weight: 900 });
+      label(c, run.text, rx, ry, { size: run.size, color: run.digit ? accent : color, weight: 900 });
+      left += run.width;
+    }
+    if (kind === "tag") drawOn(c, [[-content / 2, h / 2 - size * 0.2], [content / 2, h / 2 - size * 0.2]], easings.expoOut((t - start - 0.15) / TITLE_RISE), { color: accent, width: size * 0.1 });
+    c.restore();
+  }
+  const plate = (c, t, text, start, end, options) => title(c, t, text, start, end, "plate", options);
+  const punch = (c, t, text, start, end, options) => title(c, t, text, start, end, "punch", options);
+  const tag = (c, t, text, start, end, options) => title(c, t, text, start, end, "tag", options);
+
   // A list of [text, start, end] beat titles; with no list, the film's narration subtitles
   // (film.captions, timed from the voice track or estimated) in the lower safe area.
   function captions(c, t, list, options = {}) {
@@ -857,7 +914,7 @@ window.__filmKit = function (view, film) {
     step: (t, fps = 12) => Math.floor(t * fps + 1e-6) / fps,
     zlerp,
     pulse: PULSE,
-    slam: (t, at, o = {}) => (t < at ? 0 : slamK((t - at) / (o.dur ?? PULSE.slam), o.from, o.under)),
+    slam,
     camera,
     applyCamera,
     toScreen,
@@ -891,6 +948,9 @@ window.__filmKit = function (view, film) {
     stroke,
     node,
     signature,
+    plate,
+    punch,
+    tag,
     caption,
     captions,
     words,

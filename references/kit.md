@@ -18,13 +18,16 @@ Portrait feeds cover the picture: navigation at the top, the author row, caption
 
 Rules: draw from `t` only; paint the background every frame; words go in `film.json` `copy` (per language), numbers and series in `data` (one place to change them), images in `assets`, footage in `videos`. Sizes scale with `u` (1 at 1080p). `k` is the locked palette: `bg`, `surface`, `ink`, `sub`, `accent`, `accent2`.
 
-Every time-based helper is `(c, t, …positional, options)`; points are `[x, y]`; `at` is when it starts.
+Every time-based helper is `(c, t, …positional, options)`; points are `[x, y]`; `at` is when it starts. For `caption`, `plate`, `punch` and `tag`, x/y are frame fractions, while size/maxWidth are pixels; the three styled titles default to the portrait safe area, use theme ink/accent (white fill, white punch text), and leave during the final 0.18 s before end.
 
 | helper | does |
 |---|---|
 | `shoot(c, t, events, drawWorld, base)` | camera: `[at, "push", [x,y]?, k]` · `[at, "pan", [x,y]]` · `[at, "to", [x,y], z]` · `[at, "slam"]` · `[at, "shake", amp]` · `[at, "cut", [x,y], z]`; `base` = `{x, y, z}` at start |
 | `captions(c, t)` | narration subtitles from the voice track (sentence cues; estimated when the service gave none); long lines wrap into two balanced lines |
 | `captions(c, t, [[text, start, end], …])`, `caption(c, t, text, start, end, {x, y, align, size, plate, lines})` | beat titles in a masked slot: rise 0.35 s, hold, leave 0.18 s |
+| `plate(c, t, text, start, end, {x, y, size, color, accent, fill, maxWidth})` | bold information on a softly shadowed white plate; digits use the accent at 1.32× size; scales to fit |
+| `punch(c, t, text, start, end, {x, y, size, color, accent, fill, dark, maxWidth, rotate})` | tilted accent block with a dark offset base and extruded white type; slams in over 0.35 s |
+| `tag(c, t, text, start, end, {x, y, size, color, accent, fill, maxWidth})` | bold white-backed label with a soft shadow and an animated accent underline |
 | `words(c, t, text, [x,y], {at, stagger, times, style: rise\|slam\|pop\|type, emphasis: [words], until})` | kinetic words entering in turn |
 | `stamp(c, t, text, [x,y], {at, until, box, rotate})` | a word slammed in, 1.55 → 0.94 → 1 |
 | `counter(c, t, [x,y], {value, from, at, dur, prefix, suffix, decimals})` | number rolling to `value` (a `data` key or a number) |

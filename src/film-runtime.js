@@ -280,7 +280,7 @@
               alpha = +(this.globalAlpha * styleAlpha(this[styleKey])).toFixed(3);
             // Filled text only: an outline is usually there to lift the text off its background.
             const seen = styleKey === "fillStyle" && alpha >= 0.5 ? contrastOf(this, { ...box, det: T.a * T.d - T.b * T.c }, this[styleKey], alpha) : null;
-            boxes.push({ text: s, ...box, alpha, order: order++, ...(seen ?? {}) });
+            boxes.push({ text: s, ...box, alpha, order: order++, ...(seen ?? {}), size: (parseFloat(/([\d.]+)px/.exec(this.font)?.[1]) || 0) * Math.sqrt(Math.abs(T.a * T.d - T.b * T.c)) });
           }
         } catch {}
         return draw.apply(this, arguments);
