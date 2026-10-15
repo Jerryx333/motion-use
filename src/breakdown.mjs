@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { claimDir } from "./build.mjs";
+import { analyzeAudio, audioText } from "./breakdown-audio.mjs";
 
 const CUT_DIFF = 5; // mean |diff| on 0-255 gray that marks a transition
 const DEBOUNCE = 12; // frames
@@ -333,11 +334,12 @@ function markdown(s) {
   L.push("- `transitions/Tnn.jpg` 15 cells, every 2nd frame from 2 frames before each cut: how each transition is built.");
   L.push("- `heatmaps/segNN.png` red = where pixels move inside a segment; `motion_area` is the moving fraction.");
   L.push("- `ref/segNN.png` last clean frame of each segment at full resolution: the composition to match.");
+  L.push("", "## Audio", "", audioText(s.audio));
   return L.join("\n") + "\n";
 }
 
 /** Break a reference video into cuts, beat grid, sheets, strips, heatmaps, refs and palette. */
-export async function breakdownVideo(file, outDir, { fps } = {}) {
+export async function breakdownVideo(file, outDir, { fps, music = [] } = {}) {
   if (!fs.existsSync(file)) throw new Error(`${file} not found`);
   const meta = probeMeta(file);
   const rate = Math.min(fps || meta.fps, 60);
@@ -392,6 +394,7 @@ export async function breakdownVideo(file, outDir, { fps } = {}) {
     beat_grid: beat,
     contact_sheets: contact,
     palette: await palette(file, meta.duration, meta.width, meta.height),
+    audio: analyzeAudio(file, music),
   };
   fs.writeFileSync(path.join(outDir, "breakdown.json"), JSON.stringify(summary, null, 2) + "\n");
   fs.writeFileSync(path.join(outDir, "breakdown.md"), markdown(summary));

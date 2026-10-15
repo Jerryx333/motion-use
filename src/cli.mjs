@@ -42,6 +42,7 @@ import {
 import { normalizeAudio, verifyVideo, buildNarrationStem } from "./verify.mjs";
 import { generateFilmNarration } from "./film-voiceover.mjs";
 import { breakdownVideo } from "./breakdown.mjs";
+import { audioText } from "./breakdown-audio.mjs";
 import { fetchReference } from "./reference.mjs";
 import { analyzeBeats, decodeMono, alignDrop } from "./beats.mjs";
 import { compareVideos } from "./compare.mjs";
@@ -81,7 +82,7 @@ Usage: motion-use <command> [options]
                       --loop checks the last frame leads into the first, --manifest <json> proves the file
                       is the current release master)
   breakdown <video>   Take a reference video apart: cuts, beat grid, contact sheets, transition strips,
-                      motion heatmaps, palette and motion lights (--out <dir>)
+                      motion heatmaps, palette, audio and motion lights (--out <dir>, repeat --music <song>)
   reference <url>     Study a published piece (a prompt-motion.com entry, or any page with a VideoObject):
                       credits, prompt or skill, video and its breakdown in references/<slug>/ (git-ignored;
                       the prompt belongs to its creator: paraphrase, never paste) (--no-video, --out <dir>)
@@ -169,6 +170,7 @@ export async function main(argv) {
         lang: { type: "string" },
         format: { type: "string" },
         out: { type: "string" },
+        music: { type: "string", multiple: true },
         at: { type: "string" },
         quality: { type: "string" },
         engine: { type: "string" },
@@ -1749,8 +1751,8 @@ async function verify(o, [file]) {
   return r.ok ? 0 : 1;
 }
 
-async function runBreakdown(input, out) {
-  const r = await breakdownVideo(input, out);
+async function runBreakdown(input, out, options = {}) {
+  const r = await breakdownVideo(input, out, options);
   // The same motion lights the delivery check uses, so a reference and your film compare directly.
   const measured = measureMotion(input),
     motion = { level: gradeMotion(measured).level, ...measured };
@@ -1759,9 +1761,10 @@ async function runBreakdown(input, out) {
     path.join(out, "breakdown.json"),
     JSON.stringify(r, null, 2) + "\n",
   );
-  fs.appendFileSync(
-    path.join(out, "breakdown.md"),
-    `\n## Motion lights\n\n${motion.level}: fast_ratio ${motion.fast_ratio}, worst window ${motion.worst_window_fast_ratio ?? "n/a"}, longest still ${motion.longest_still_s}s, events ${motion.events_per_10s}/10s, blue-purple ${motion.blue_purple_share}. Compare with your own film's review/<id>/report.json.\n`,
+  const md = path.join(out, "breakdown.md");
+  fs.writeFileSync(
+    md,
+    fs.readFileSync(md, "utf8").replace("\n## Audio\n", `\n## Motion lights\n\n${motion.level}: fast_ratio ${motion.fast_ratio}, worst window ${motion.worst_window_fast_ratio ?? "n/a"}, longest still ${motion.longest_still_s}s, events ${motion.events_per_10s}/10s, blue-purple ${motion.blue_purple_share}. Compare with your own film's review/<id>/report.json.\n\n## Audio\n`),
   );
   return r;
 }
@@ -1809,12 +1812,12 @@ async function breakdown(o, [file]) {
         path.basename(input, path.extname(input)),
       ),
   );
-  const r = await runBreakdown(input, out),
+  const r = await runBreakdown(input, out, { music: o.music ?? [] }),
     motion = r.motion;
   if (o.json) console.log(JSON.stringify({ ok: true, out, ...r }, null, 2));
   else
     console.log(
-      `${path.join(out, "breakdown.md")}\n${r.transitions.length} transitions, ${r.segments.length} segments${r.beat_grid ? `, beat grid ${r.beat_grid.step_seconds}s (${r.beat_grid.bpm_if_quarter} BPM if quarters)` : ""}; motion ${motion.level}`,
+      `${path.join(out, "breakdown.md")}\n${r.transitions.length} transitions, ${r.segments.length} segments${r.beat_grid ? `, beat grid ${r.beat_grid.step_seconds}s (${r.beat_grid.bpm_if_quarter} BPM if quarters)` : ""}; motion ${motion.level}\n${audioText(r.audio)}`,
     );
   return 0;
 }

@@ -89,10 +89,37 @@ Each event starts from wherever earlier events have brought the camera at time `
 
 ```bash
 motion-use breakdown reference.mp4          # → breakdown/reference/breakdown.md
+motion-use breakdown reference.mp4 --music song.mp3 --music alternative.wav
+motion-use breakdown reference.mp4 --music song.mp3 --json
 motion-use compare reference.mp4 out/my-film-en-landscape-VO.mp4 --times 1.5,4,7.2
 ```
 
 The breakdown writes cut times, a beat-grid fit (confirm it against the music; few cuts fit any grid), 4 fps contact sheets, a strip of every second frame around each transition (the only place a transition's mechanism is visible), a heatmap of where pixels move inside each segment, the last clean frame of each segment, a palette with blue-purple share, and the same motion lights the delivery check uses. Replication means learning the mechanism (timing, framing, how a transition grows out of an object), then applying it to a new subject; it is never a pixel copy, and borrowed principles are credited in DIRECTOR.md.
+
+Audio analysis runs even without `--music`: 100 ms windows use short-time energy, autocorrelation periodicity and zero-crossing rate (a coarse spectral proxy) to estimate speech/pause windows and median speech pitch. Pitch is a hint only, not a gender or voice identity. Supplying original song files enables matching and music/voice level estimates; this does not identify songs from an online catalog. Mono audio is decoded at 2 kHz with the existing ffmpeg decoder and matched using normalized linear FFT correlation. Positive offsets mean the song second playing at reference second 0; negative offsets mean the song enters after the head. At least half the reference (or the entire shorter input, with a 2 s target minimum) must overlap. Matching uses the best whole-clip NCC lag, then the upper quartile of 200 ms window NCC at that lag to tolerate narration; the match threshold is 0.5. Repeating passages can produce ambiguous offsets.
+
+The Audio section appears on stdout and in `breakdown.md`; `--json` and `breakdown.json` include `audio`:
+
+| Field | Meaning |
+|---|---|
+| `available`, `estimated` | Audio stream present; measurements are estimates (`estimated` is absent without audio). |
+| `sample_rate`, `match_threshold` | Analysis sample rate in Hz and NCC match threshold (absent without audio). |
+| `matches[]` | Each candidate: `file`, `offset_seconds` (signed), `ncc` (window upper quartile), `whole_clip_ncc`, `overlap_seconds`, `matched`. |
+| `selected_music` | Highest-NCC matched file, or null. |
+| `speech_windows[]`, `pause_windows[]` | Estimated intervals in reference seconds, each with inclusive `start` and exclusive `end`. |
+| `pitch_median_hz` | Median voiced-window autocorrelation pitch (roughly 71–333 Hz), or null. |
+| `levels` | Null without a match; otherwise the fields below. |
+| `levels.voice_dbfs` | Estimated residual voice RMS level during covered speech windows. |
+| `levels.music_speech_dbfs`, `levels.music_pause_dbfs` | Aligned music RMS levels fitted by nonnegative least-squares gain per 100 ms window. |
+| `levels.music_below_voice_db`, `levels.pause_music_below_voice_db` | Voice level minus music level; positive means music is quieter. Pause music is compared with the same speech voice level. |
+| `levels.speech_reduction_db`, `levels.ducked` | Pause music level minus speech music level; at least 3 dB suggests ducking. Null when either class has no measurable covered audio. |
+| `levels.speech_gain`, `levels.pause_gain` | Median fitted linear original-song gains in each class, or null. |
+| `film_music` | Suggested `{"file", "from", "volume", "duck"}` object, or null when a usable suggestion cannot be made. |
+| `notes[]` | Limitations and reasons for skipped measurements. |
+
+When matched, the song estimate is subtracted before detecting speech and pitch. This is approximate source separation: tonal instruments can resemble speech, unvoiced speech can be missed, effects contaminate the residual, and remixes, edits, time stretching, stereo differences and compression can spoil matching or gain estimates. A song naturally quieter under speech can trigger the 3 dB ducking heuristic; inspect the fitted gains and listen. Missing windows/levels remain null instead of asserting no ducking.
+
+The last Audio line gives a film.json `music` suggestion when the offset and voice/music levels are usable, including `"duck": false` when no reduction is detected. `volume` is the measured music/voice RMS ratio, assuming similarly normalized music and narration assets; recalibrate it with your narration and listen to the rendered mix. This does not reconstruct ducking ramps or depth. Existing film.json `music.from` accepts only nonnegative seconds: negative-offset matches are reported but no directly usable music line is emitted. Without `--music` or a match, music-relative levels and the suggestion are skipped with a reason.
 
 For a new character interpretation or style direction, show three options first, with different compositions, not three color grades. A named style is not exempt.
 

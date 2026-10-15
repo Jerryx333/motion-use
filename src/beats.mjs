@@ -36,7 +36,7 @@ export function decodeMono(file, { rate = SR, from = 0, length } = {}) {
 }
 
 // In-place radix-2 FFT on real/imag arrays of length n (a power of two).
-function fft(re, im) {
+export function fft(re, im) {
   const n = re.length;
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1;

@@ -57,3 +57,64 @@ test("compare stacks frames side by side", () => {
   assert.equal(h, r.height);
   assert.throws(() => compareVideos(clip, other, out, { times: [5] }), /outside both videos/);
 });
+
+// Unique evolving chord and beat pattern: repeated stationary tones cannot establish an offset.
+const song = path.join(tmp, "song.wav");
+const voice = path.join(tmp, "voice.wav");
+const speechGate = "between(t,1,3)+between(t,5,7)+between(t,8,9)";
+const songExpr = "(0.06*sin(2*PI*(330*t+0.71*t*t))+0.05*sin(2*PI*(470*t+0.31*t*t))+0.04*sin(2*PI*(620*t+0.17*t*t)))*(0.65+0.35*sin(2*PI*1.73*t))* (0.8+0.2*sin(2*PI*0.137*t))";
+execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `aevalsrc='${songExpr}':s=8000:d=24`, "-c:a", "pcm_f32le", song]);
+execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `aevalsrc='0.2*sin(2*PI*200*t)*(0.8+0.2*sin(2*PI*3*t))*(${speechGate})':s=8000:d=10`, "-c:a", "pcm_f32le", voice]);
+
+const { analyzeAudio, matchMusic } = await import("../src/breakdown-audio.mjs");
+const { decodeMono } = await import("../src/beats.mjs");
+function rms(samples, windows) {
+  let power = 0, count = 0;
+  for (const [from, to] of windows) for (let i = from * 2000; i < to * 2000; i++) { power += samples[i] ** 2; count++; }
+  return Math.sqrt(power / count);
+}
+for (const duck of [false, true]) test(`audio matches song, pitch and levels (duck=${duck})`, async () => {
+  const ref = path.join(tmp, `audio-${duck}.mp4`);
+  const musicGain = duck ? `0.4*(1-0.5*(${speechGate}))` : "0.4";
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=s=64x64:r=10:d=10", "-i", song, "-i", voice, "-filter_complex", `[1:a]atrim=start=7.5:duration=10,asetpts=PTS-STARTPTS,aeval='val(0)*(${musicGain})'[m];[m][2:a]amix=inputs=2:normalize=0[a]`, "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "128k", ref]);
+  const a = analyzeAudio(ref, [song, voice]);
+  assert.ok(Math.abs(a.matches[0].offset_seconds - 7.5) <= 0.05, JSON.stringify(a.matches));
+  assert.ok(a.matches[0].ncc > 0.85, `NCC ${a.matches[0].ncc}`);
+  assert.equal(a.selected_music, song);
+  assert.ok(Math.abs(a.pitch_median_hz - 200) < 20, `pitch ${a.pitch_median_hz}`);
+  const talk = [[1, 3], [5, 7], [8, 9]];
+  const original = decodeMono(song, { rate: 2000, from: 7.5, length: 10 });
+  const narration = decodeMono(voice, { rate: 2000 });
+  const expected = 20 * Math.log10(rms(narration, talk) / (rms(original, talk) * (duck ? 0.2 : 0.4)));
+  assert.ok(Math.abs(a.levels.music_below_voice_db - expected) <= 2, `${JSON.stringify(a.levels)} expected ${expected}`);
+  assert.equal(a.levels.ducked, duck, JSON.stringify(a.levels));
+  assert.equal(a.film_music.duck, duck);
+  assert.ok(a.speech_windows.length >= 3 && a.pause_windows.length >= 3);
+  if (!duck) {
+    const out = path.join(tmp, "bd-audio");
+    const summary = await breakdownVideo(ref, out, { music: [song] });
+    assert.equal(summary.audio.selected_music, song);
+    assert.match(fs.readFileSync(path.join(out, "breakdown.md"), "utf8"), /film.json music:.*"duck":false/);
+    const cli = JSON.parse(execFileSync(process.execPath, ["bin/motion-use.mjs", "breakdown", ref, "--music", song, "--music", voice, "--out", path.join(tmp, "cli-audio"), "--json"], { encoding: "utf8" }));
+    assert.equal(cli.audio.matches.length, 2);
+    assert.equal(cli.audio.film_music.from, 7.5);
+  }
+});
+
+test("audio handles no candidate, no match, negative offset and silence", () => {
+  const a = analyzeAudio(voice);
+  assert.ok(Math.abs(a.pitch_median_hz - 200) < 20);
+  assert.equal(a.levels, null);
+  assert.match(a.notes.join(" "), /No --music/);
+  const unmatched = analyzeAudio(voice, [song]);
+  assert.equal(unmatched.matches[0].matched, false);
+  assert.equal(unmatched.film_music, null);
+  const original = decodeMono(song, { rate: 2000, length: 10 });
+  const delayed = new Float32Array(original.length + 4000);
+  delayed.set(original, 4000);
+  const result = matchMusic(delayed, original);
+  assert.equal(result.offset_seconds, -2);
+  assert.ok(result.ncc > 0.99);
+  assert.equal(matchMusic(new Float32Array(4000), original).ncc, 0);
+  assert.equal(analyzeAudio(clip).available, false);
+});
