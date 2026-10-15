@@ -72,6 +72,6 @@ motion-use still . --allow-code --beats 4  # one frame per bar: does each bar ch
 
 ## What motion-use leaves to other tools
 
-About a fifth of the gallery is interactive 3D (three.js, WebGL, Blender) and about one in eight is generated video (Seedance, Kling, Veo). motion-use renders exact-time 2D films; for those, use the tools the cases name.
+About a fifth of the gallery is interactive 3D (three.js, WebGL, Blender) and about one in eight is generated video (Seedance, Kling, Veo). motion-use renders exact-time 2D and WebGL/three.js, and accepts external command renderers for scenes better built in Blender or another engine. Generated video remains an input from the tools the cases name; use it as footage inside the film.
 
 Tools the cases link to, studied for this page: [huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion) (already the source of the directing method), [HyperFrames community skills](https://github.com/heygen-com/hyperframes-community-skills) (single-purpose HyperFrames workflows), [motion-graphics-skills](https://github.com/charlie947/motion-graphics-skills) (a brand-intake-first skill pack), [claude-animation-skill](https://github.com/buildwithhanif/claude-animation-skill) (detail vocabulary per surface, character rigs, an in-order/out-of-order frame check).

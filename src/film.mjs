@@ -16,6 +16,7 @@ import { readVoManifest, estimateCues } from "./voiceover.mjs";
 import { readingSeconds, READING_RULE } from "./text-probe.mjs";
 import crypto from "node:crypto";
 import { isBlankFrame } from "./motion-check.mjs";
+import { validateTiming } from "./timing.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const FILM_FORMATS = { ...FORMATS, square: [1440, 1440] };
@@ -142,6 +143,17 @@ export function validateFilm(
           : "1–4 unique language codes",
       );
   }
+  validateTiming(data, error);
+  if (data.narrationReviews !== undefined) {
+    if (!data.narrationReviews || typeof data.narrationReviews !== "object" || Array.isArray(data.narrationReviews)) error("$.narrationReviews", "a map keyed by language/shot-id");
+    else for (const [key, review] of Object.entries(data.narrationReviews)) {
+      const [lang, id, extra] = key.split("/");
+      if (extra || !Array.isArray(data.languages) || !data.languages.includes(lang) || !(id === "narration" || (Array.isArray(data.shots) && data.shots.some((s) => s?.id === id))))
+        error(`$.narrationReviews.${key}`, "a language and narration shot ID in this film");
+      if (!review || !/^[a-f0-9]{64}$/.test(review.sha256 ?? "") || ["script", "heard", "reason"].some((f) => typeof review[f] !== "string" || !review[f].trim() || review[f].length > 16000))
+        error(`$.narrationReviews.${key}`, "{sha256, script, heard, reason}: an exact audio/script/transcript review record");
+    }
+  }
   const local = (v, p) => {
     if (
       typeof v !== "string" ||
@@ -164,6 +176,46 @@ export function validateFilm(
     }
     return f;
   };
+  if (data.provenance !== undefined) {
+    const entries = data.provenance;
+    if (!entries || typeof entries !== "object" || Array.isArray(entries))
+      error("$.provenance", "a map of project-relative file paths to {sourceUrl, license, useBasis}");
+    else for (const [file, entry] of Object.entries(entries)) {
+      const p = `$.provenance.${file}`;
+      local(file, p);
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) { error(p, "{sourceUrl, license, useBasis}"); continue; }
+      if (entry.sourceUrl !== null && entry.sourceUrl !== undefined) {
+        try { if (!["http:", "https:"].includes(new URL(entry.sourceUrl).protocol)) throw new Error(); }
+        catch { error(`${p}.sourceUrl`, "an http(s) source URL, or null for self-made material"); }
+      }
+      for (const key of ["license", "useBasis"])
+        if (entry[key] !== null && entry[key] !== undefined && (typeof entry[key] !== "string" || !entry[key].trim() || entry[key].length > 2000))
+          error(`${p}.${key}`, "non-empty text up to 2000 characters, or null when unverified");
+    }
+  }
+  const fonts = {};
+  if (data.fonts !== undefined) {
+    if (!data.fonts || typeof data.fonts !== "object" || Array.isArray(data.fonts)) error("$.fonts", "a map of family names to {file, license}");
+    else for (const [family, spec] of Object.entries(data.fonts)) {
+      const p = `$.fonts.${family}`;
+      if (!/^[A-Za-z][A-Za-z0-9-]{0,39}$/.test(family) || ["Film-Sans", "Film-Mono"].includes(family)) { error(p, "a safe CSS family name, e.g. Title"); continue; }
+      const file = local(spec?.file, `${p}.file`), license = local(spec?.license, `${p}.license`);
+      if (file && !/\.(ttf|otf|woff2?)$/i.test(file)) error(`${p}.file`, "TTF, OTF, WOFF or WOFF2");
+      if (file && license) fonts[family] = { file, license };
+    }
+  }
+  if (data.captionStyle !== undefined) {
+    const style = data.captionStyle;
+    if (!style || typeof style !== "object" || Array.isArray(style)) error("$.captionStyle", "subtitle style options");
+    else for (const [key, v] of Object.entries(style)) {
+      const p = `$.captionStyle.${key}`;
+      if (["x", "y"].includes(key)) { if (!finite(v, 0, 1)) error(p, "fraction of the frame, 0–1"); }
+      else if (key === "lines") { if (!Number.isInteger(v) || v < 1 || v > 4) error(p, "1–4 subtitle lines"); }
+      else if (["size", "maxWidth", "weight"].includes(key)) { if (!finite(v, 1, 4096)) error(p, "positive pixels/count"); }
+      else if (["plate", "color"].includes(key)) { if (typeof v !== "string" || !/^(#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([\d.,\s]+\))$/i.test(v)) error(p, "a hex or rgb(a) color"); }
+      else error(p, "supported options: x, y, size, maxWidth, weight, lines, plate, color");
+    }
+  }
   // External engine: a local command renders the picture as PNG frames; the browser composition,
   // when one is declared, becomes a transparent overlay (subtitles over 3D) composited on top.
   let engine = null;
@@ -280,6 +332,8 @@ export function validateFilm(
     end = s.end;
     text(s.purpose, `${p}.purpose`);
     text(s.action, `${p}.action`);
+    if (s.duration !== undefined && s.duration !== "narration") error(`${p}.duration`, '"narration" for retime; start/end remain the execution timeline');
+    if (s.tail !== undefined && !finite(s.tail, 0, 10)) error(`${p}.tail`, "narration tail seconds, 0–10");
     if (s.hold !== undefined && !finite(s.hold, 0, s.end - s.start))
       error(`${p}.hold`, "seconds, within the shot");
     if (s.hold > 1 && !s.holdReason)
@@ -360,10 +414,10 @@ export function validateFilm(
       error(p, "choose a local file or a bundled effect, not both");
     if (
       a.effect !== undefined &&
-      !["click", "switch", "whoosh", "ding"].includes(a.effect)
+      !["click", "switch", "whoosh", "ding", "stamp", "thud", "paper", "explosion", "train", "map-pin", "page-turn", "low-boom"].includes(a.effect)
     )
-      error(`${p}.effect`, "click, switch, whoosh or ding");
-    const file = ["click", "switch", "whoosh", "ding"].includes(a.effect)
+      error(`${p}.effect`, "a bundled effect: click, switch, whoosh, ding, stamp, thud, paper, explosion, train, map-pin, page-turn, low-boom");
+    const file = ["click", "switch", "whoosh", "ding", "stamp", "thud", "paper", "explosion", "train", "map-pin", "page-turn", "low-boom"].includes(a.effect)
         ? path.join(ROOT, "assets", "sfx", `${a.effect}.wav`)
         : local(a.file, `${p}.file`);
     let start = a.start ?? 0,
@@ -497,7 +551,9 @@ export function validateFilm(
     error("$.videos", `${videoFrames} footage frames; keep footage under 5400 frames (90 s at 60 fps) per film`);
   else if (videoFrames > 1800)
     warnings.push({ path: "$.videos", message: `${videoFrames} footage frames are extracted per language and format (~${Math.round(videoFrames * 0.12)} MB of JPEG in the build folder)` });
-  const glyphs = missingGlyphs(JSON.stringify([data.copy ?? {}, data.data ?? {}]));
+  let glyphs = [];
+  try { glyphs = missingGlyphs(JSON.stringify([data.copy ?? {}, data.data ?? {}, data.captions ?? {}]), fonts); }
+  catch (e) { error("$.fonts", `cannot read font: ${e.message}`); }
   if (glyphs.length)
     error("$.copy", `missing font glyphs: ${glyphs.join(" ")}`);
   const narration = resolveNarration(
@@ -527,7 +583,7 @@ export function validateFilm(
       videos,
       libraries,
       dir,
-      fonts: {},
+      fonts,
       narrationConfig: narration.config,
       narrationPlans: narration.plans,
       narrationPending: narration.pending,
@@ -561,7 +617,7 @@ export const CAMERA_MOVES = [
 ];
 const FAST_MOVES = new Set(["push", "pull", "pan", "slam", "whip"]);
 const WEAK_ACTION =
-  /(出现|显示|展示|呈现|淡入|淡出|弹出|停留|介绍|逐条|依次)|\b(appears?|shows?|displays?|is shown|fades? (in|out)|pops? up|introduces?|one by one)\b/i;
+  /(出现|显示|展示|呈现|淡入|淡出|弹出|停留|介绍|逐条)|\b(appears?|shows?|displays?|is shown|fades? (in|out)|pops? up|introduces?)\b/i;
 const HEX = /^#[0-9a-f]{6}$/i;
 // Hue 225–300°, saturation ≥ .30: the blue-purple band the motion check also measures.
 export function bluePurpleHex(hex) {
@@ -655,8 +711,9 @@ function directingChecks(data, shots, error, warn) {
     if (led) textLed++;
     if (led && (i === 0 || (i === valid.length - 1 && valid.length > 1)))
       warn(p, `${i === 0 ? "opening" : "closing"} shot is led by text; ${i === 0 ? "open on an object doing something related to the subject" : "end on the subject doing something, with any words written on objects in the scene"}`);
-    if (typeof s.action === "string" && WEAK_ACTION.test(s.action))
-      warn(`${p}.action`, "presentation verbs (appear, show, fade in, 出现, 展示…) describe slides; say what the object itself does");
+    const weak = typeof s.action === "string" ? WEAK_ACTION.exec(s.action) : null;
+    if (weak)
+      warn(`${p}.action`, `presentation verbs: matched ${JSON.stringify(weak[0])} at character ${[...s.action.slice(0, weak.index)].length}; say what the object itself does`);
     if (Number.isFinite(seconds) && valid.length > 1) {
       if (seconds > 8 && !s.holdReason)
         warn(p, `${+seconds.toFixed(2)}s shot: split it, or record why it holds in holdReason`);
@@ -784,6 +841,7 @@ export function initFilm(o, dir) {
 // Subtitles for the narration actually placed in this language: cues timed by the voice
 // service when the clip still matches its manifest entry, otherwise estimated per sentence.
 export function filmCaptions(film, lang, voiceTracks) {
+  if (film.captions?.[lang] !== undefined) return film.captions[lang].map((c) => ({ ...c }));
   const dir = film.narrationConfig?.dir,
     manifest = dir ? readVoManifest(dir) : {},
     out = [];
@@ -805,13 +863,24 @@ export function filmCaptions(film, lang, voiceTracks) {
   return out.sort((a, b) => a.start - b.start);
 }
 
-// Where platform UI leaves the picture visible; shared by build config, preview and engine jobs.
+// Only cache-matched service word boundaries reach the picture; stale clips yield no words.
+export function filmWords(film, lang, voiceTracks) {
+  const dir=film.narrationConfig?.dir, manifest=dir?readVoManifest(dir):{};
+  return voiceTracks.flatMap((track)=>{
+    const plan=film.narrationPlans?.find((p)=>p.id===track.id), rec=dir?manifest[path.relative(dir,track.file)]:null;
+    if(!rec?.words || rec.text!==plan?.narration?.[lang] || rec.sha!==crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex")) return [];
+    return rec.words.filter((w)=>Number.isFinite(w.start)&&Number.isFinite(w.end)&&w.start>=0&&w.end>w.start&&w.end<=track.length+.05)
+      .map((w)=>({...w,id:track.id,start:track.start+w.start,end:track.start+Math.min(track.length,w.end),estimated:false}));
+  }).sort((a,b)=>a.start-b.start);
+}
+
+// Where platform UI leaves the picture visible; shared by build config, preview, engine jobs and view.safe.
 export const safeBox = (w, h) =>
   h > w
     ? { x: w * 0.06, y: h * 0.1, w: w * 0.8, h: h * 0.66 }
     : { x: w * 0.05, y: h * 0.06, w: w * 0.9, h: h * 0.88 };
 
-export async function buildFilm(film, lang, format, outDir, { range = null, guides = false } = {}) {
+export async function buildFilm(film, lang, format, outDir, { range = null, guides = false, noCaptions = false, noBgm = false } = {}) {
   claimDir(outDir);
   const [w, h] = FILM_FORMATS[format],
     fmt = { w, h, vertical: h > w, name: format };
@@ -865,10 +934,11 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
   const fontSizes = await writeSubsets(
     // The kit draws characters of its own (e.g. "−" and "," in count()).
     JSON.stringify(film.copy) +
-      JSON.stringify(film.data ?? {}) +
+    JSON.stringify(film.data ?? {}) + JSON.stringify(film.captions ?? {}) +
       (film.source ? fs.readFileSync(film.source, "utf8") : "") +
       fs.readFileSync(path.join(ROOT, "src", "film-kit.js"), "utf8"),
     fontDir,
+    film.fonts,
   );
   for (const f of fs
     .readdirSync(path.join(ROOT, "assets", "fonts"))
@@ -881,8 +951,8 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
   // Every sound is one entry of `mix` (what plays where, how loud): the page's <audio> tags are
   // written from it for the browser renderer, and src/mix.mjs mixes it with ffmpeg for the native one.
   const mix = [],
-    selectedTracks = range ? [] : film.tracks.filter((a) => !a.lang || a.lang === lang);
-  if (!range && film.music !== "none" && film.music !== undefined) {
+    selectedTracks = range ? [] : film.tracks.filter((a) => (!a.lang || a.lang === lang) && !(noBgm && a.role === "music"));
+  if (!range && !noBgm && film.music !== "none" && film.music !== undefined) {
     let rel = "assets/audio/music.wav";
     if (film.music === "builtin" || film.music.builtin)
       writeMusic(
@@ -945,7 +1015,11 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
   if (narrationStem)
     buildNarrationStem(voiceTracks, film.duration, narrationStem);
   const config = {
-    captions: filmCaptions(film, lang, voiceTracks),
+    captions: noCaptions ? [] : filmCaptions(film, lang, voiceTracks),
+    cues: film.cues?.[lang] ?? {},
+    words: filmWords(film, lang, voiceTracks),
+    noCaptions,
+    captionStyle: film.captionStyle ?? {},
     name: film.name,
     duration: film.duration,
     fps: film.fps,
@@ -976,9 +1050,10 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     path.join(ROOT, "src", "film-kit.js"),
     path.join(outDir, "kit.js"),
   );
+  const customFaces = Object.keys(film.fonts ?? {}).map((family) => `@font-face{font-family:"${family}";src:url(assets/fonts/brand-${family}.woff2);font-weight:100 900}`).join("");
   fs.writeFileSync(
     path.join(outDir, "index.html"),
-    `<!doctype html><html lang="${esc(lang)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'${loads ? " 'wasm-unsafe-eval'" : ""}; style-src 'self' 'unsafe-inline'; connect-src ${loads ? "'self' data: blob:" : "'none'"}; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>${esc(film.name)}</title><style>@font-face{font-family:Film Sans;src:url(assets/fonts/sans.woff2);font-weight:100 900}@font-face{font-family:Film Mono;src:url(assets/fonts/mono.woff2);font-weight:100 800}html,body{margin:0;background:${overlay ? "transparent" : "#151515"}}#root{width:100%;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style></head><body><div id="root" data-composition-id="main" data-no-timeline data-width="${w}" data-height="${h}" data-duration="${range ? range.to - range.from : film.duration}"><canvas id="film-canvas" width="${w}" height="${h}"></canvas>${audio.join("")}</div><script id="film-config" type="application/json">${JSON.stringify(config).replace(/</g, "\\u003c")}</script>${scripts}<script src="kit.js"></script><script src="composition/draw.js"></script><script src="strict-canvas.js"></script><script src="runtime.js"></script></body></html>`,
+    `<!doctype html><html lang="${esc(lang)}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'${loads ? " 'wasm-unsafe-eval'" : ""}; style-src 'self' 'unsafe-inline'; connect-src ${loads ? "'self' data: blob:" : "'none'"}; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>${esc(film.name)}</title><style>${customFaces}@font-face{font-family:Film Sans;src:url(assets/fonts/sans.woff2);font-weight:100 900}@font-face{font-family:Film Mono;src:url(assets/fonts/mono.woff2);font-weight:100 800}html,body{margin:0;background:${overlay ? "transparent" : "#151515"}}#root{width:100%;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style></head><body><div id="root" data-composition-id="main" data-no-timeline data-width="${w}" data-height="${h}" data-duration="${range ? range.to - range.from : film.duration}"><canvas id="film-canvas" width="${w}" height="${h}"></canvas>${audio.join("")}</div><script id="film-config" type="application/json">${JSON.stringify(config).replace(/</g, "\\u003c")}</script>${scripts}<script src="kit.js"></script><script src="composition/draw.js"></script><script src="strict-canvas.js"></script><script src="runtime.js"></script></body></html>`,
   );
   return {
     range,

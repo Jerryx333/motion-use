@@ -32,6 +32,7 @@ export function filmInputs(film, filmFile) {
   const list = [
     { role: "film", file: filmFile },
     { role: "composition", file: film.source },
+    ...Object.values(film.fonts ?? {}).flatMap((font) => [{ role: "font", file: font.file }, { role: "font-license", file: font.license }]),
     ...(film.libraries ?? []).map((file) => ({ role: "composition", file })),
     ...Object.values(film.fileAssets ?? {}).map((file) => ({ role: "asset", file })),
     ...Object.values(film.files ?? {}).map((file) => ({ role: "file", file })),
@@ -54,7 +55,7 @@ export function filmInputs(film, filmFile) {
  * Store the inputs of this render under <out>/.snapshots and return its record.
  * Blobs are shared between snapshots (named by sha256), so an unchanged clip costs nothing.
  */
-export function createSnapshot(film, filmFile, out, { version } = {}) {
+export function createSnapshot(film, filmFile, out, { version, renderOptions } = {}) {
   const store = path.join(out, ".snapshots"),
     blobs = path.join(store, "blobs");
   fs.mkdirSync(blobs, { recursive: true });
@@ -77,9 +78,10 @@ export function createSnapshot(film, filmFile, out, { version } = {}) {
   const id = crypto
     .createHash("sha256")
     .update(JSON.stringify(files.map((f) => [f.path, f.sha256])))
+    .update(renderOptions && Object.values(renderOptions).some(Boolean) ? JSON.stringify(renderOptions) : "")
     .digest("hex")
     .slice(0, 12);
-  const record = { id, film: path.relative(base, filmFile), created: new Date().toISOString(), motion_use: version, project: base, ...(film.engine ? { engine: { command: film.engine.command, cwd: film.engine.cwd } } : {}), files };
+  const record = { id, film: path.relative(base, filmFile), created: new Date().toISOString(), motion_use: version, project: base, ...(renderOptions ? { renderOptions } : {}), ...(film.engine ? { engine: { command: film.engine.command, cwd: film.engine.cwd } } : {}), files };
   const file = path.join(store, `${id}.json`);
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(record, null, 2) + "\n");
   return record;

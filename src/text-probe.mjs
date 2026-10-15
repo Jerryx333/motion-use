@@ -174,11 +174,20 @@ export function readingSeconds(text) {
   return +(0.5 + 0.3 * words + 0.15 * cjk).toFixed(2);
 }
 
+// The same string drawn twice in the same place is one piece of text: a halo (strokeText in the
+// background colour) under its fill, or a shadow pass. Without this a map label read "新疆新疆".
+const sameDraw = (a, b) => a.text === b.text && area(meet(a, b)) >= 0.8 * Math.min(area(a), area(b));
+export function distinctBoxes(boxes) {
+  const out = [];
+  for (const b of boxes) if (!out.some((o) => sameDraw(o, b))) out.push(b);
+  return out;
+}
+
 // One line of words drawn piece by piece (M.words draws each word on its own): boxes on the same
-// row, close together, read as one line, left to right.
+// row, close together, read as one line, left to right. Returns { text, parts }.
 function lines(boxes) {
   const rows = [];
-  for (const b of [...boxes].sort((a, b) => a.x0 - b.x0)) {
+  for (const b of distinctBoxes(boxes).sort((a, b) => a.x0 - b.x0)) {
     const h = b.y1 - b.y0;
     const row = rows.find((r) => {
       const last = r.at(-1),
@@ -190,27 +199,33 @@ function lines(boxes) {
   }
   const cjk = (ch) => /[⺀-鿿豈-﫿가-힯　-〿＀-￯]/.test(ch ?? "");
   // A word space between pieces that sit apart; letters written one by one stay one word.
-  return rows.map((r) =>
-    r.reduce((s, b, i) => {
+  return rows.map((r) => ({
+    text: r.reduce((s, b, i) => {
       const gap = i ? b.x0 - r[i - 1].x1 : 0;
       return i && gap > 0.15 * (b.y1 - b.y0) && !cjk(s.at(-1)) && !cjk(b.text[0]) ? `${s} ${b.text}` : s + b.text;
     }, ""),
-  );
+    parts: r.map((b) => b.text),
+  }));
 }
 
 /**
  * Lines of text visible for less time than it takes to read them (READING_RULE). A line that grows
  * (a typewriter, words arriving one by one, a counter rolling: digits are ignored for identity)
- * counts from the moment its first part appeared. Strings with no letters are not checked.
+ * counts from the moment its first part appeared. Strings with no letters are not checked. A line
+ * that went because the camera carried it out of the frame (a map label during a push) is not
+ * judged: the film moved on, the text did not vanish; a line that disappears in place still is.
  * samples: [{ t, boxes }] sorted by t.
  */
 export function readingRuns(samples, { width = Infinity, height = Infinity, alpha = 0.25, gap = 0.15 } = {}) {
   const open = new Map(),
     runs = [];
+  const inFrame = (b) => b.x1 > 0 && b.x0 < width && b.y1 > 0 && b.y0 < height;
+  const leftFrame = (r) =>
+    (samples[r.nextIdx]?.boxes ?? []).some((b) => r.parts.has(b.text) && (b.alpha ?? 1) >= alpha && area(b) > 0 && !inFrame(b));
   const close = (key, at) => {
     const r = open.get(key);
     open.delete(key);
-    if (r.grown) return;
+    if (r.grown || leftFrame(r)) return;
     const seconds = at - r.from,
       required = readingSeconds(r.text);
     if (seconds < required - 0.05)
@@ -220,21 +235,23 @@ export function readingRuns(samples, { width = Infinity, height = Infinity, alph
     const s = samples[i];
     const vis = s.boxes.filter((b) => (b.alpha ?? 1) >= alpha && b.x1 > 0 && b.x0 < width && b.y1 > 0 && b.y0 < height && area(b) > 0);
     const now = new Map();
-    for (const text of lines(vis)) if (/\p{L}/u.test(text)) now.set(text.replace(/\d/g, "0").replace(/\s+/g, ""), text);
+    for (const line of lines(vis)) if (/\p{L}/u.test(line.text)) now.set(line.text.replace(/\d/g, "0").replace(/\s+/g, ""), line);
     // Gone for longer than `gap`: the line ended at the first sample it was missing from.
     for (const [key, r] of [...open]) if (!now.has(key) && s.t - r.last > gap) close(key, r.next ?? s.t);
-    for (const [key, text] of now) {
+    for (const [key, { text, parts }] of now) {
       let r = open.get(key);
       if (!r) {
-        r = { from: s.t, text };
+        r = { from: s.t, text, parts: new Set() };
         for (const [k, o] of open)
           if (!now.has(k) && s.t - o.last <= gap && key.includes(k)) ((r.from = Math.min(r.from, o.from)), (o.grown = true));
         for (const [k, o] of [...open]) if (o.grown) open.delete(k);
         open.set(key, r);
       }
       r.text = text;
+      parts.forEach((p) => r.parts.add(p));
       r.last = s.t;
       r.next = samples[i + 1]?.t;
+      r.nextIdx = i + 1;
     }
   }
   // A line still up when the film ends sits on the end frame (players hold it or loop): not judged.

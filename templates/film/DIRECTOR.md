@@ -37,3 +37,15 @@ Run `motion-use still . --allow-code`, examine the frames, then render. Read `ou
 ## Lessons
 
 What worked, as do / evidence / why / when; new problems as symptom → cause → fix → verified by.
+
+## Direction and source-to-shot record
+
+When the direction is open, compare A (direct), B (another medium), C (another telling) in DIRECTIONS.md, with one real keyframe each or a 2–4 second motion test. Record an existing choice/delegation and proceed without another gate. Read the production method: https://github.com/leeguooooo/motion-use/blob/main/references/production.md
+
+| Required fact / feature | Source evidence | Shot ID / time | Visible change | Card / adapted parameters | Cue | Final review evidence |
+|---|---|---|---|---|---|---|
+| Fill for this subject | Source URL or file | Same ID as film.json | Object/action/consequence | catalog ID or custom | named time or none | Timecode/frame |
+
+Browse `motion-use catalog styles` / `catalog shots`; `catalog --out <fresh-dir>` writes a live study gallery. These are mechanisms to adapt, not film templates. Check one frame before committing to a drawing/footage/mixed route.
+
+Keep review findings as time/frame → observable issue → change → rechecked artifact. Retain previous versions and cite the final cut; do not replace evidence with a quality score. Record material sources/permissions in film.json provenance; hashes are calculated by handoff. Use no-captions/no-bgm variants and `handoff` for editing; code-drawn motion remains baked in the picture.

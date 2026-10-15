@@ -194,6 +194,10 @@ function run(bin, args, { cwd } = {}) {
     const child = spawn(bin, args, { cwd, env: ENV(), stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "",
       err = "";
+    // Decode as a stream: a CJK character split across two pipe chunks must not become U+FFFD
+    // (the text check reported "北洋���府" when the probe's JSON crossed a 64 KB boundary).
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (err = (err + d).slice(-8000)));
     child.on("error", (e) => resolve({ code: -1, out: e.message, stdout }));

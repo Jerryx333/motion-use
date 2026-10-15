@@ -131,3 +131,23 @@ All commands take `--json`. `still` and `render` take `--lang`, `--format` and `
 ## Licenses
 
 motion-use is MIT. The engine, HyperFrames, is Apache-2.0. Fonts are SIL OFL; sound effects are CC0 or original; one dependency of the engine (`@img/sharp-libvips`) is LGPL-3.0. Every file and dependency is listed in [ASSETS.md](ASSETS.md). How motion-use compares with HyperFrames, Remotion and others: [docs/alternatives.md](docs/alternatives.md).
+
+## Direction studies and editing handoff
+
+Compare three genuinely different directions with real keyframes before building an open-ended film. Map required facts/features to source evidence, stable shot IDs and final review frames; respect an already chosen or delegated direction. See [production.md](references/production.md).
+
+```bash
+motion-use catalog styles                 # six original material/motion studies
+motion-use catalog shots                  # six parameterized shot cards with limits
+motion-use catalog --out ./gallery        # local live previews, pause and scrub
+motion-use study parallax-tour ./study    # the same implementation as a renderable film
+motion-use render ./study --allow-code --quality draft
+motion-use render my-film --allow-code --no-captions --no-bgm
+motion-use handoff my-film --out ./editing-package
+motion-use handoff --check --out ./editing-package
+motion-use concat parts.json --out ./joined --release
+```
+
+Studies use illustrative objects and data. Handoff packages contain SRT, separate source audio, shot timing, explicitly declared inputs and provenance hashes, not a native editor draft or a rendered clean plate. Code-driven motion stays baked; no-captions suppresses M.captions, not custom drawing or text inside footage. Variants have distinct filenames and replayable snapshot settings. Drafts remain under out/preview even when delivery measurements fail.
+
+The [film contract](references/film.md) also covers imported subtitles/keyword cues, optional measured Azure word boundaries, narration-driven retiming, custom licensed fonts, compiled GeoJSON/TopoJSON maps, camera anchors, updating legends, original documentary SFX, joined-master verification and remote-render synchronization.

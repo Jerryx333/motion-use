@@ -180,7 +180,7 @@ For bundled licensed sounds, use `{"effect":"click","role":"sfx","start":3.38,"v
 
 `narration_check`: before capture, render transcribes every generated narration clip (faster-whisper through `uv`, model `small` unless `--asr-model`; transcripts cached in `voiceover/.motion-use-asr.json` by clip hash) and compares it with its script. Flagged: an acronym or Latin word heard differently ("AI" spoken "A-A-I" — spell it "A I" in the script, subtitles may keep "AI"), a homophone that forms a dictionary word with a many-reading neighbour (重试 heard 重视: the voice read 重 as zhòng — use 再试), a different-sounding word, missing or extra words, or a line under 80 % similar. Plain ASR spelling (它 → 他) is listed but not flagged. Without `uv` or the model the check is skipped with a note. `motion-use voiceover check <dir>` runs it alone; `--no-asr` skips it. With `voiceover.say`, the comparison uses the substituted spoken text.
 
-Recognition checks characters, not tones: “有数” read as shǔ can still pass at 100%, and it cannot detect “板” becoming bán in the consecutive third tones of “小板子”; conversely, correctly spoken “下一班” can be transcribed as “下一半” and falsely flagged. For polyphonic characters and consecutive third tones, compare pitch or listen by ear. If the reading is wrong, use `voiceover.say` to substitute a homophone without changing subtitles.
+Chinese comparisons use tone-bearing dictionary readings when the cached ASR result includes them: different tones are flagged, while same-tone homophone spelling differences do not lower similarity. Old caches fall back to toneless comparison; run `motion-use voiceover check <dir> --force` to refresh them. These readings describe ASR’s spelling, not measured audio pitch: “有数” read as shǔ may still transcribe as “有数” and pass, and the third-tone sandhi of “板” becoming bán in “小板子” needs listening or pitch review. Conversely, correctly spoken “下一班” may be transcribed as “下一半” and flagged for tone review. Listen to confirm polyphones, names, consecutive third tones and suspected ASR errors. If the reading is wrong, use `voiceover.say` to substitute a homophone without changing subtitles; both tone comparison and exact listening-review records use that substituted spoken text (see Reading and motion diagnostics).
 
 `canvas_check`: before capture, still and render (including range previews) call the composition at every output frame time across the whole film, in Chrome or motion-render. Too few Canvas arguments, NaN/Infinity numeric arguments or properties, and drawFrame exceptions fail even without `--gate` or with `--no-text-check`; errors list the first time (two decimal seconds), zero-based frame index and affected frame count, grouped into at most 15 entries in terminal and JSON output. `--no-canvas-check` temporarily skips this check for false positives.
 
@@ -213,3 +213,139 @@ Play/pause with Space, drag the timeline, step one film frame with the arrow key
 Refresh after editing: requests for the review page or built index check film.json, the composition directory, declared assets/libraries and audio source mtimes. Changed inputs rebuild under `out/.build/preview-<name>-<lang>-<format>/`; only changes to the audio mix or its sources remix the WAV. No MP4 or finished film frame capture is made. `videos` footage is supported: normal `buildFilm` processing extracts source JPEG frames for exact seeking. `brief.json` and external command engines are rejected; command engines require rendering film frames, which preview does not perform.
 
 Preview is for human review before rendering, not delivery verification, and does not replace `render`, its technical checks or review of the delivered MP4. Only preview authored code you wrote or trust: the composition runs in your browser. Do not run concurrent build commands against the same preview directory.
+## Direction cards and production records
+
+`motion-use catalog [styles|shots] [id] [--json]` reads original motion-use cards with intended use, timing parameters, pitfalls and implementation location. `catalog --out <fresh-dir>` writes a self-contained HTML gallery with live studies, pause/scrub and reduced-motion support. `study <id> <fresh-dir>` writes the same drawing mechanism into a renderable six-second film. The gallery uses illustrative objects and data, and its studies demonstrate mechanisms rather than finished film quality. Use landscape studies as references; recompose for portrait safe areas.
+
+[production.md](production.md) specifies three-direction previews, required-feature/source/shot mapping, measured timing, review evidence and editable delivery. Keep film.json as the execution timeline; project-local direction and review records explain the choices.
+
+## Imported subtitles, keyword events and subtitle appearance
+
+```json
+"captions": {
+  "zh": [{"text":"信号抵达。", "start":2.1, "end":3.5, "estimated":false}]
+},
+"cues": {
+  "zh": {"arrival":{"time":2.4,"estimated":false}}
+},
+"captionStyle": {"plate":"rgba(0,0,0,0.9)", "y":0.86, "size":52}
+```
+
+Explicit `captions.<lang>` replace generated sentence cues for that language. An empty list intentionally disables automatic subtitles for that language. Entries must be ordered and non-overlapping inside the film. `estimated` should remain true for interpolated/manual estimates. Keywords require an explicit estimated boolean; timestamps do not become measured merely by entering this JSON.
+
+`M.cue('arrival')` returns the current language's event time, and throws if missing; `M.hasCue('arrival')` tests availability. Use the same timestamp for picture and SFX placement. No event silently falls back to zero. Service sentence timestamps and character-share estimates remain the default when explicit captions are absent.
+
+`captionStyle` supports `plate`, `color`, `x`, `y`, `size`, `maxWidth`, `weight`, `lines`. x/y are fractions of the current frame; sizes are output pixels. Default subtitle plate opacity is 0.78. A translucent plate may still leave underlying labels visible; use an opaque plate or keep the subtitle area clear when the picture needs it. `M.captions` call options override this style. Titles drawn with `M.caption` remain independent.
+
+## Narration measurements and retiming
+
+Generated narration is MP3 (`voiceover/<lang>/<shot-id>.mp3`, Azure: 24 kHz, 96 kbps mono). Imported `.wav`, `.m4a`, `.aac` and `.ogg` recordings are supported and take precedence. Read `voiceover --json` for actual file path, format, duration, window and `fits`; never infer the file extension. Oversized speech is retained and reported, not trimmed.
+
+For per-shot timing, mark shots `"duration":"narration","tail":0.4` while retaining provisional numeric start/end. Generate narration first, then run `motion-use retime <film> --out <new-json-beside-film>`. It uses the longest measured clip across languages, adds the 0.08 s lead, 0.08 s end margin and requested tail, and rounds to whole frames. Other shots keep their frame-rounded durations. The proposal defaults to `film.retimed.json`; the source file and `brief.length` target are preserved. Review the difference before rendering the proposal. A target mismatch remains visible as a warning.
+
+Retime before placing external subtitles, cues, audio or footage; the command refuses those absolute-time dependencies instead of guessing how to move them. Root continuous narration cannot set per-shot lengths. A proposal over 180 seconds needs parts, described below. Music hit times and drawing choreography still need to follow the new shot windows.
+
+For measured word timing, `voiceover --engine azure --word-timing` uses Azure Speech SDK 1.52.0 in an optional uv-managed Python environment. Credentials remain in the environment; audio and service word boundaries are cached together. No call to this service happens in catalog, handoff or retime. The normal Azure REST route remains audio-only. SDK unavailable or no returned boundaries means an explicit failure, not invented timing. [Azure event documentation](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-speech-synthesis#subscribe-to-synthesizer-events).
+
+`M.at('phrase', {shot:'shot-id', occurrence:0})` reads only service boundaries whose audio hash and script still match. `shot` is optional; multiple matches require it or an explicit zero-based occurrence. No measured match throws. Matches must start and end on service word boundaries inside the same shot; whitespace between words is ignored. A substring inside a service word has no measured onset and is rejected. Manual/imported sources can use named `cues` instead. Do not treat this as forced alignment of arbitrary recordings.
+
+## Custom font families
+
+```json
+"fonts": {"Title":{"file":"fonts/title.ttf", "license":"fonts/title-license.txt"}}
+```
+
+Family names use letters, numbers and hyphens, starting with a letter. Each family needs an existing local TTF/OTF/WOFF/WOFF2 and licence file inside the project. Fonts are subset to film text and drawing-source characters, copied as `assets/fonts/brand-Title.woff2`, and declared under `font-family:"Title"`. In your drawing, use `ctx.font = '700 72px "Title", "Film Sans"'`; bundled fonts remain available as fallback. Validation checks aggregate glyph coverage and rejects unreadable fonts. It does not prove every explicitly selected family covers every string; inspect the actual render for unwanted fallback. Snapshots and handoff include the declared fonts and licence files.
+
+## Maps and geographic drawing
+
+```bash
+motion-use geo world --out world-map.json --width 1600 --height 900
+motion-use geo china-provinces --out provinces.json
+motion-use geo boundaries.geojson --out local-map.json --projection equirectangular --simplify 0.6
+motion-use geo boundaries.topojson --object provinces --id-field name --out local-map.json
+```
+
+Input is local Polygon/MultiPolygon GeoJSON or TopoJSON. The compiler fits Mercator (default) or equirectangular projection into the requested canvas with a 16 px margin; simplification tolerance is in output pixels. An explicit `--id-field` selects that properties field, overriding feature.id; missing/empty selected values fail. Without it, IDs use a nonempty feature.id, then properties.name, then the feature index. Duplicate IDs fail. Interior rings remain holes. Projection parameters are saved so `M.geoPoint` places longitude/latitude into the same drawing coordinates. Split antimeridian-crossing rings upstream. The compiler does not perform union, repair invalid polygons, reconstruct historical borders or prove topology after simplification; inspect the output at your selected tolerance.
+
+`world` uses bundled Natural Earth 1:110m admin-0 geometry, public domain, with source/transform information in assets/geo/SOURCES.md. These are present-day illustrative boundaries, not historical or authoritative borders. `china-provinces` provides geoBoundaries gbOpen CHN ADM1: 34 units representing 2019, under CC BY 4.0 distribution terms. It preserves source shapeID values and names; output metadata includes the year and required attribution. Credit **geoBoundaries — www.geoboundaries.org — CC BY 4.0** in the film/product and record changes. Licence text and pinned provenance are bundled beside the data. This is illustrative source geometry; use suitable checked material for historical or authoritative claims.
+
+Load compiled JSON through a declared `files` entry, before declaring readiness. Draw it inside the camera/world transform:
+
+```js
+M.map(c, t, geo, {fills:[{at:2, ids:['region-id'], color:'#c55238', duration:0.3, stagger:0.1}]});
+const a = M.geoPoint(geo, 116.4, 39.9), b = M.geoPoint(geo, 121.5, 31.2);
+M.arrow(c, t, [a,b], {at:2.4,dur:1.2}); // preprojected points; use more points for a curve
+M.pin(c, t, b, {at:3.6,text:'Destination'});
+```
+
+M.route draws an arc-length reveal; M.arrow adds a head, M.pin adds a landing mark. Region fill events use hex colours for interpolated blends. `M.list(c,t,[[0,['A','B']],[4,['A','C']]],{x:80,y:160,gap:56})` provides a non-overlapping old-text exit/new-text entrance. Items may be `{id,text,color}`; shared items are drawn once. Keep item rows stable for continuity. Set the update event after the last staggered region changes, not when the first one starts.
+
+Camera events and `base` accept `anchor:[screenX,screenY]`: the event's world point lands there rather than at frame centre. `M.toScreen` uses the same anchor. Existing camera calls retain the centred default; to use an anchor with the compact `shoot` API, provide object events rather than tuple events.
+
+## Editing variants and handoff
+
+`render --no-captions` suppresses M.captions (including explicit lists); `--no-bgm` omits root background music and audio tracks labelled role music. Other source drawing, unlabelled audio, narration and SFX remain. Both flags also apply to still. Authored films only. Output/build IDs include the flags, so variants cannot overwrite each other. Snapshots remember the variant switches for exact replay.
+
+`motion-use handoff <film> --out <fresh-dir>` exports explicitly declared sources, separate audio, editable SRT, shot frame boundaries, captions/keywords with timing flags, material declarations and file hashes. Built-in music is generated as a separate source. It does not render a clean picture, create a normalized final mix or write an editor's native draft. No unrelated folder files are copied. The package README describes import and audio-doubling limits.
+
+Declare known provenance in film.json:
+
+```json
+"provenance": {"media/photo.jpg":{"sourceUrl":"https://example.org/source", "license":"CC-BY-4.0", "useBasis":"Use under the source page's attribution terms; credit recorded in DIRECTOR.md"}}
+```
+
+Use null when a source/permission is unknown, rather than guessing. Hashes are computed from the actual copied files. `handoff --check --out <package>` checks those exported bytes. Neither that check nor a declared licence string proves legal permission, current-source freshness or editor compatibility. A new source edit needs a new export; publish masters still go through release manifests.
+
+## Long films assembled from parts
+
+Single films keep their 180-second limit; a joined master can be longer. Render all parts at identical size and frame rate, then write:
+
+```json
+{"name":"history","lang":"zh","format":"landscape","parts":[
+  {"file":"part-a/out/release/a.mp4","manifest":"part-a/out/release/release-manifest.json","from":0,"to":150},
+  {"file":"part-b/out/release/b.mp4","manifest":"part-b/out/release/release-manifest.json"}
+]}
+```
+
+`motion-use concat parts.json --out joined --release` validates any supplied part manifest against the full source file before trimming. It records source SHA256, snapshot ID (when supplied), source range and placement. Ranges are frame-rounded; mixed resolution/fps is rejected. Silent parts receive a silent audio span only when another part has audio.
+
+The complete soundtrack is normalized once, and the actual joined file is decoded/measured. Each seam gets a three-second freeze scan and before/after mean-level measurements; reported static spans and level jumps require review. These signals do not establish whether a hold is useful or the music transition sounds natural. Watch and listen across every join, trimming deliberate per-part head/tail holds in parts.json. No crossfade is invented.
+
+A successful --release writes release/<name>.mp4 and release-manifest.json with the part chain; existing `verify --manifest` works on the joined master. Failed candidates remain in preview with no release manifest. Source parts are recorded by hash, not bundled; retain their projects and snapshots to rebuild. No generated narration/script correspondence is inferred for an arbitrary input MP4.
+
+## Draft and still evidence
+
+Draft renders are retained under out/preview/*-draft.mp4 even when delivery measurements are red; review reports retain the failed measurements. High/release candidates still cannot replace approved outputs on failure. An explicit --gate remains a request to stop on text/narration failures.
+
+Each still invocation writes to a unique out/stills/<id>/<selection>-<run>/ directory, with full-resolution frames, sheet.png and frames.json (time, shot ID, full frame path). --shot captures the first settled, middle and final stable frame, approximately 0.3 s before the end. Use --at to examine an exit or exact boundary. Failed attempts cannot return an earlier run's sheet as current evidence. Existing old sheets are preserved as history. Output ownership lives in out/.motion-use-outputs.json, keyed by relative path and file hash; it is portable when copied with the output directory.
+
+## Render on another machine
+
+Use an isolated remote project directory and the same motion-use version/renderer for reproducibility. Sync the declared inputs and licence files; do not sync .env, private credentials, node_modules or live build folders. Configure voice-service credentials separately on the render machine, or sync only the authorized pre-generated voice clips and their manifest.
+
+Example (replace the explicit host and paths):
+
+```bash
+rsync -a --exclude out/ --exclude node_modules/ --exclude '.env*' ./my-film/ render-host:~/renders/my-film/
+ssh render-host 'motion-use render ~/renders/my-film --allow-code --release --json'
+# Pull into a new local result directory; never overwrite another live render's build/still folders.
+rsync -a render-host:~/renders/my-film/out/release/ ./remote-result/release/
+rsync -a render-host:~/renders/my-film/out/review/ ./remote-result/review/
+rsync -a render-host:~/renders/my-film/out/.snapshots/ ./remote-result/.snapshots/
+motion-use verify --manifest ./remote-result/release/release-manifest.json ./remote-result/release/<master>.mp4
+# Local review/stills use another --out; do not share an active build folder.
+motion-use still ./my-film --allow-code --out ./local-review
+```
+
+This is an explicit synchronization workflow, not a --remote renderer. Quoted paths/host commands must be adjusted for the actual machine. Omit --delete; do not share a folder between simultaneous jobs. A verified downloaded hash proves transport/file identity, not visual acceptance on the target platform.
+
+## Reading and motion diagnostics
+
+Chinese narration comparisons use tone-bearing readings when the cached transcript has them. Same-sound spelling differences and equivalent Chinese/Arabic numerals do not lower similarity; different tones, near consonants and ambiguous polyphones remain review signals. ASR cannot prove a name's intended pronunciation. Old caches remain compatible with the earlier toneless comparison; explicitly run `motion-use voiceover check <film> --force` to refresh them. This flag applies to that check; render --force retains its output-overwrite meaning.
+
+The text probe decodes native output as a UTF-8 stream and deduplicates the same string's coincident stroke/fill passes for reading-time analysis. A label carried fully outside the frame is distinguished from text disappearing in place. Contrast still uses a coincident stroke as backing when available; these checks do not assess every decorative/offscreen-canvas treatment.
+
+Motion reports retain the grayscale fast_ratio measurement and add colour-region events (at least 5% of a 160 px analysis frame changes a channel by at least 24). Recolouring a region can therefore count as an event even when its luminance barely changes. Low fast_ratio with frequent region events gets a specific note; a red delivery light is not silently waived. Review the cut and record a deliberate allow-static reason when its measured motion is appropriate to the subject.
+
+Tone-bearing transcript text is still ASR's spelling, not a measurement of spoken tone; names may produce more conservative flags. After actually listening, a reviewer can record an exact exception under `narrationReviews["zh/shot-id"]`: `{sha256, script, heard, reason}`. Use the check report's audio_sha256 and exact script/heard strings. It applies only while all three still match, preserves comparison_flagged and the underlying changes, and records reviewed.reason. Changed audio, script or transcript invalidates it automatically. This is a review record, not an authentication mechanism; never fabricate one to pass a gate.

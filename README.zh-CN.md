@@ -21,6 +21,33 @@ motion-use doctor
 
 motion-use 属于 [*-use 工具族](https://github.com/leeguooooo/plugins)：给 AI agent 一双手的工具。随附的 skill 教 agent 把“给 X 做个发布视频”变成镜头计划、关键帧和成片 MP4。
 
+## 方案、风格与镜头
+
+方向没定时，先比较三种讲法，各看一张真实关键帧；只有靠运动才能判断的方案才做 2–4 秒小样。已经指定或委托的方向直接沿用。每个必讲事实、产品功能都映射到来源、镜头 ID 和最终验收画面。[制作与交付方法](references/production.md)。
+
+```bash
+motion-use catalog styles                 # 6 种原创风格研究
+motion-use catalog shots                  # 6 张镜头卡：适用场景、参数与已知限制
+motion-use catalog --out ./motion-gallery # 可播放、暂停、拖动的本地图册
+motion-use study parallax-tour ./study    # 图册里的同一段代码，生成可渲染工程
+motion-use render ./study --allow-code --quality draft
+```
+
+样例用示意物件演示运动机制，不能冒充真实产品录屏。风格覆盖白板、纸面证据、动态文字、数据叙事、套色印刷和产品聚焦。镜头卡覆盖焦点交接、视差巡览、前后对比、结构展开、形状接力和图表落点。
+
+旁白生成的 JSON 会列出实际文件、格式、时长与镜头是否容得下。`retime` 按音频实测生成新的整帧时间线；Azure `--word-timing` 可取词级时间，`M.at` / `M.cue` 让画面跟着词走。另有 GeoJSON/TopoJSON 地图编译、地图标记、偏心运镜、图例接力、自定义字体与字幕样式，见 [film.json 契约](references/film.md)。
+
+后期交付可选无字幕、无 BGM 变体，再导出 SRT、独立音频、镜头表、素材来源和哈希：
+
+```bash
+motion-use render my-film --allow-code --no-captions --no-bgm
+motion-use handoff my-film --out ./editing-package
+motion-use handoff --check --out ./editing-package
+motion-use concat parts.json --out ./joined --release  # 长片分段拼接，整体归一响度与验收
+```
+
+交接包是可导入剪辑软件的素材与时间表，不是剪映原生草稿。代码动效仍需烘焙到画面；无字幕开关只控制 `M.captions`，自绘文字与素材内文字保留。草稿会留在 `out/preview/`，交付检查失败也能回看。
+
 ## 导演模式（默认）
 
 ```bash

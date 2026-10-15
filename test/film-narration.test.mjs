@@ -68,6 +68,32 @@ test("film say validation, original captions and substituted narration checks", 
   }
 });
 
+test("say composes with selected audio, tone comparison and exact listening reviews", t => {
+  const dir = temp();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "selected.wav");
+  fs.writeFileSync(file, "synthetic audio");
+  const review = { sha256: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"), script: "买", heard: "卖", reason: "Synthetic review fixture" };
+  const project = {
+    narrationConfig: { dir, say: { "原文": "买" } },
+    narrationPlans: [{ id: "a", narration: { zh: "原文" } }],
+    tracks: [{ id: "a", lang: "zh", role: "voiceover", file }],
+    narrationReviews: { "zh/a": review },
+  };
+  const run = ({ texts }) => {
+    assert.deepEqual(texts, ["买"]);
+    return { items: [{ file, text: "卖" }], chars: { 买: ["mai"], 卖: ["mai"] }, tones: { 买: ["mai3"], 卖: ["mai4"] }, phrases: [] };
+  };
+  const items = narrationItems(project);
+  assert.equal(items[0].file, file);
+  const checked = checkNarration(items, { run });
+  assert.equal(checked.ok, true);
+  assert.equal(checked.lines[0].comparison_flagged, true);
+  assert.equal(checked.lines[0].changes[0].kind, "tone");
+  review.script = "原文";
+  assert.equal(checkNarration(narrationItems(project), { run }).ok, false);
+});
+
 test("new films default to narration; a soundtrack alone never satisfies delivery", () => {
   const dir = temp();
   initFilm({ lang: "en", format: "square" }, dir);
