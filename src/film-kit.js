@@ -69,7 +69,7 @@ window.__filmKit = function (view, film) {
   // Pulse camera: hold → a fast push, pan or slam → hold. Each event starts from where the
   // earlier events have brought the camera at time t; the world point (x, y) sits at screen centre.
   function camera(t, events = [], base = {}) {
-    let cam = { x: base.x ?? view.width / 2, y: base.y ?? view.height / 2, z: base.z ?? 1, r: base.r ?? 0 };
+    let cam = { x: base.x ?? view.width / 2, y: base.y ?? view.height / 2, z: base.z ?? 1, r: base.r ?? 0, anchor: base.anchor ?? [view.width / 2, view.height / 2] };
     let zMul = 1,
       dy = 0,
       moving = false;
@@ -99,13 +99,13 @@ window.__filmKit = function (view, film) {
         kind === "push"
           ? { x: e.x ?? cam.x, y: e.y ?? cam.y, z: cam.z * (1 + (e.k ?? PULSE.k)), r: e.r ?? cam.r }
           : { x: e.x ?? cam.x, y: e.y ?? cam.y, z: kind === "pan" ? cam.z : (e.z ?? cam.z), r: e.r ?? cam.r };
-      cam = { x: lerp(cam.x, target.x, p), y: lerp(cam.y, target.y, p), z: zlerp(cam.z, target.z, p), r: lerp(cam.r, target.r, p) };
+      cam = { x: lerp(cam.x, target.x, p), y: lerp(cam.y, target.y, p), z: zlerp(cam.z, target.z, p), r: lerp(cam.r, target.r, p), anchor: cam.anchor.map((v, i) => lerp(v, (e.anchor ?? cam.anchor)[i], p)) };
     }
-    return { x: cam.x, y: cam.y + dy, z: cam.z * zMul, r: cam.r, moving };
+    return { x: cam.x, y: cam.y + dy, z: cam.z * zMul, r: cam.r, anchor: cam.anchor, moving };
   }
-  const pick = (e) => Object.fromEntries(["x", "y", "z", "r"].filter((k) => e[k] !== undefined).map((k) => [k, e[k]]));
+  const pick = (e) => Object.fromEntries(["x", "y", "z", "r", "anchor"].filter((k) => e[k] !== undefined).map((k) => [k, e[k]]));
   function applyCamera(c, cam) {
-    c.translate(view.width / 2, view.height / 2);
+    c.translate(...(cam.anchor ?? [view.width / 2, view.height / 2]));
     c.rotate(cam.r || 0);
     c.scale(cam.z, cam.z);
     c.translate(-cam.x, -cam.y);
@@ -115,7 +115,8 @@ window.__filmKit = function (view, film) {
       dy = (y - cam.y) * cam.z,
       cs = Math.cos(cam.r || 0),
       sn = Math.sin(cam.r || 0);
-    return [view.width / 2 + dx * cs - dy * sn, view.height / 2 + dx * sn + dy * cs];
+    const anchor = cam.anchor ?? [view.width / 2, view.height / 2];
+    return [anchor[0] + dx * cs - dy * sn, anchor[1] + dx * sn + dy * cs];
   }
 
   function rng(seed = 1) {
@@ -537,8 +538,9 @@ window.__filmKit = function (view, film) {
   // A list of [text, start, end] beat titles; with no list, the film's narration subtitles
   // (film.captions, timed from the voice track or estimated) in the lower safe area.
   function captions(c, t, list, options = {}) {
+    if (film.noCaptions) return;
     if (list) {
-      for (const [text, start, end] of list) caption(c, t, text, start, end, options);
+      for (const [text, start, end] of list) caption(c, t, text, start, end, { ...film.captionStyle, ...options });
       return;
     }
     // Subtitles sit at the bottom of the safe area: in portrait that is above the platform's
@@ -546,8 +548,59 @@ window.__filmKit = function (view, film) {
     const safe = view.safe ?? { x: view.width * 0.05, y: view.height * 0.06, w: view.width * 0.9, h: view.height * 0.88 };
     // Centred on the safe area, so a long line never reaches the right-hand action column.
     // Portrait is narrow: a sentence may need three lines; landscape keeps two.
-    const sub = { lines: view.vertical ? 3 : 2, x: view.vertical ? (safe.x + safe.w / 2) / view.width : 0.5, y: view.vertical ? (safe.y + safe.h) / view.height - 0.03 : 0.885, size: (view.vertical ? 50 : 50) * unit, weight: 700, color: "#ffffff", plate: "rgba(0,0,0,.55)", maxWidth: view.vertical ? safe.w : view.width * 0.86, ...options };
+    const sub = { lines: view.vertical ? 3 : 2, x: view.vertical ? (safe.x + safe.w / 2) / view.width : 0.5, y: view.vertical ? (safe.y + safe.h) / view.height - 0.03 : 0.885, size: 50 * unit, weight: 700, color: "#ffffff", plate: "rgba(0,0,0,.78)", maxWidth: view.vertical ? safe.w : view.width * 0.86, ...film.captionStyle, ...options };
     for (const cue of film.captions ?? []) caption(c, t, cue.text, cue.start, cue.end, sub);
+  }
+  // Updating legends: shared items are drawn once; replaced text exits before new text enters.
+  function list(c, t, events, { x = 80 * unit, y = 160 * unit, gap = 56 * unit, size = 36 * unit, ...style } = {}) {
+    const event = [...events].sort((a,b) => a[0]-b[0]);
+    let index = -1; for (let i=0;i<event.length;i++) if (t>=event[i][0]) index=i;
+    if (index<0) return;
+    const normalize = (items) => items.map((v) => typeof v === "string" ? {id:v,text:v} : v);
+    const current=normalize(event[index][1]), previous=index?normalize(event[index-1][1]):[];
+    const elapsed=t-event[index][0], key=(v)=>`${v.id}\0${v.text}`;
+    const draw=(item,row,alpha)=>{if(alpha<=0)return;c.save();c.globalAlpha*=alpha;label(c,item.text,x,y+row*gap,{size,align:"left",...style,...(item.color?{color:item.color}:{})});c.restore();};
+    for(let i=0;i<previous.length;i++)if(!current.some((v)=>key(v)===key(previous[i])))draw(previous[i],i,1-clamp(elapsed/.18));
+    for(let i=0;i<current.length;i++){
+      const old=previous.findIndex((v)=>key(v)===key(current[i]));
+      if(old>=0)draw(current[i],elapsed < .18 ? old : i,1);
+      else draw(current[i],i,clamp((elapsed-(index ? .18 : 0))/.35));
+    }
+  }
+  function map(c,t,geo,{fills=[],fill=ink().surface,stroke=ink().sub,width=1.5*unit}={}) {
+    for(const region of geo.regions){
+      let color=fill;
+      for(const e of [...fills].sort((a,b)=>a.at-b.at)){
+        const i=e.ids.indexOf(region.id);if(i<0)continue;
+        const at=e.at+i*(e.stagger??0), q=clamp((t-at)/(e.duration??.3));
+        if(q>0){
+          const parse=(v)=>/^#[0-9a-f]{6}$/i.test(v)?[1,3,5].map((n)=>parseInt(v.slice(n,n+2),16)):null;
+          const a=parse(color),b=parse(e.color);color=a&&b?`#${a.map((v,j)=>Math.round(lerp(v,b[j],q)).toString(16).padStart(2,"0")).join("")}`:q>=1?e.color:color;
+        }
+      }
+      c.beginPath();for(const polygon of region.polygons)for(const ring of polygon){ring.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();}
+      c.fillStyle=color;c.fill("evenodd");c.strokeStyle=stroke;c.lineWidth=width;c.stroke();
+    }
+  }
+  function geoPoint(geo,lon,lat){
+    const phi=Math.max(-85.05112878,Math.min(85.05112878,lat))*Math.PI/180;
+    const x=lon*Math.PI/180,y=geo.projection==="mercator"?-Math.log(Math.tan(Math.PI/4+phi/2)):-lat*Math.PI/180;
+    return [x*geo.transform.scale+geo.transform.offset[0],y*geo.transform.scale+geo.transform.offset[1]];
+  }
+  function route(c,t,points,{at=0,dur=1.2,color=ink().accent,width=5*unit,head=false}={}){
+    const progress=easings.smooth((t-at)/dur);if(progress<=0)return null;
+    const tip=drawOn(c,points,progress,{color,width});
+    if(head&&tip&&points.length>1){
+      const dense=resample(points,Math.max(1,pathLength(points)/100));
+      const i=Math.max(1,Math.min(dense.length-1,Math.floor(progress*(dense.length-1))));
+      const a=dense[i-1],b=dense[i],angle=Math.atan2(b[1]-a[1],b[0]-a[0]);
+      c.save();c.translate(...tip);c.rotate(angle);c.fillStyle=color;c.beginPath();c.moveTo(0,0);c.lineTo(-18*unit,-8*unit);c.lineTo(-18*unit,8*unit);c.closePath();c.fill();c.restore();
+    }return tip;
+  }
+  function pin(c,t,point,{at=0,text="",color=ink().accent,labelColor=ink().ink,size=10*unit}={}){
+    const q=easings.smooth((t-at)/.3);if(q<=0)return;
+    c.save();c.globalAlpha*=q;c.fillStyle=color;c.beginPath();c.arc(...point,size*q,0,Math.PI*2);c.fill();
+    if(text)label(c,text,point[0],point[1]-size-22*unit,{color:labelColor,size:28*unit});c.restore();
   }
   // Kinetic words: each word enters at its own time (at + i * stagger, or times[i]).
   function words(c, t, text, at, { at: start = 0, stagger = 0.12, times = null, style = "rise", size = 96 * unit, color = ink().ink, emphasis = [], emphasisColor = ink().accent, weight = 800, align = "center", maxWidth = view.width * 0.86, lineHeight = 1.15, until = Infinity } = {}) {
@@ -893,6 +946,41 @@ window.__filmKit = function (view, film) {
     signature,
     caption,
     captions,
+    list, map, geoPoint, route, pin,
+    arrow: (c,t,points,options={}) => route(c,t,points,{...options,head:true}),
+    at: (word, { shot, occurrence } = {}) => {
+      const needle = typeof word === "string" ? word.replace(/\s+/gu, "") : "";
+      if (!needle) throw new Error("A non-empty keyword is required");
+      if (occurrence !== undefined && (!Number.isInteger(occurrence) || occurrence < 0)) throw new Error("Word occurrence must be a non-negative integer");
+      const groups = new Map();
+      for (const w of film.words ?? []) {
+        if (shot && w.id !== shot) continue;
+        if (!groups.has(w.id)) groups.set(w.id, []);
+        groups.get(w.id).push(w);
+      }
+      const matches = [];
+      for (const words of groups.values()) {
+        for (let i = 0; i < words.length; i++) {
+          let phrase = "";
+          for (let j = i; j < words.length; j++) {
+            phrase += words[j].text.replace(/\s+/gu, "");
+            if (phrase === needle) { matches.push(words[i].start); break; }
+            if (!needle.startsWith(phrase)) break;
+          }
+        }
+      }
+      matches.sort((a, b) => a - b);
+      if (!matches.length) throw new Error(`No measured word timing for: ${word}`);
+      if (matches.length > 1 && occurrence === undefined) throw new Error(`Ambiguous word timing: ${word}; specify shot or occurrence`);
+      const match = matches[occurrence ?? 0];
+      if (match === undefined) throw new Error(`No such word occurrence: ${word}`);
+      return match;
+    },
+    hasCue: (name) => Object.hasOwn(film.cues ?? {}, name),
+    cue: (name) => {
+      if (!Object.hasOwn(film.cues ?? {}, name)) throw new Error(`Unknown keyword cue: ${name}`);
+      return film.cues[name].time;
+    },
     words,
     counter,
     chart,

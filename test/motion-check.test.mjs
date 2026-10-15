@@ -44,6 +44,27 @@ test("an empty mid-film frame and a blue-purple palette are found and timed", ()
   assert.match(allowed.note, /Starry Night/);
 });
 
+test("a recolour the gray difference cannot see is a region event; the pacing light does not change (#44)", () => {
+  // A third of the frame switches every 2 s between a blue and a red of nearly the same luminance,
+  // like a map province changing hands. The gray difference barely moves; the colour does.
+  const file = make(
+    "recolour.mp4",
+    "color=c=0xefe6d0:s=640x360:r=30,drawbox=x=120:y=60:w=300:h=200:color=0x3d6f9e:t=fill:enable='lt(mod(t,4),2)',drawbox=x=120:y=60:w=300:h=200:color=0xb0503a:t=fill:enable='gte(mod(t,4),2)'",
+    12,
+  );
+  const m = measureMotion(file);
+  assert.ok(m.fast_ratio < 0.035, `fast_ratio ${m.fast_ratio}`);
+  assert.ok(m.region_events_per_10s >= 4, `region events ${m.region_events_per_10s}`);
+  const g = gradeMotion({ ...m, seconds: 45 });
+  const row = g.rows.find((r) => r.metric === "fast_ratio");
+  assert.equal(row.level, "red", "region events explain a low score, they do not pass it");
+  assert.match(row.note, /region changes per 10 s, but each moves little of the frame/);
+  // A still picture has no region events and no such note.
+  const still = measureMotion(make("still2.mp4", "smptebars=s=640x360:r=30", 4));
+  assert.equal(still.region_events_per_10s, 0);
+  assert.equal(gradeMotion({ ...still, seconds: 45 }).rows.find((r) => r.metric === "fast_ratio").note, undefined);
+});
+
 test("a hard cut is a transition, not motion", () => {
   const cut = make("cut.mp4", "smptebars=s=640x360:r=30,hflip", 2);
   const base = make("base.mp4", "testsrc=s=640x360:r=30,format=gray,lutyuv=y=val/2", 2);

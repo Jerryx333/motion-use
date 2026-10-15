@@ -16,6 +16,10 @@ motion-use doctor
 
 Use the user's subject, material and existing project; verify product claims against the source or real behavior. An invented UI, cursor walkthrough or process illustration must not pass as a real recording or real terminal output; say it is an illustration. Ask only for decisions that change the result.
 
+Read [references/production.md](references/production.md) for direction selection, feature-to-shot mapping, speech timing, review and editable delivery. When direction is open, compare A (direct), B (another medium), C (another telling) in project-local `DIRECTIONS.md`; render one representative frame each, or 2–4 seconds when motion decides the choice. Record an existing choice or delegation and continue without another gate. Do not make three full films. Map every required fact/feature to source evidence, a stable shot ID, its visible state change and final review evidence in `DIRECTOR.md`.
+
+`motion-use catalog styles|shots` lists original cards; `catalog --out <fresh-dir>` creates a browsable, scrubbable gallery. `study <id> <fresh-dir>` creates the same mechanism as a renderable six-second silent film. Read the card's parameters and pitfalls before adapting it. These are illustrative studies, not a substitute for the subject's real material or a finished film.
+
 `motion-use init <dir>` writes `film.json`, `composition/draw.js` and `DIRECTOR.md`. The starter is a study to replace, not a template to re-skin: a film laid out like it is flagged (`demo_similarity`).
 
 - Lock `look`: one style sentence, one palette, the character approach (none, hands, footage, generated frames — not code-drawn mascots).
@@ -35,6 +39,10 @@ Films render with the native renderer (motion-render, installed by install.sh; `
 3D or another renderer: models, HDRs and decoders go in `files` (a three.js loader fetches `window.filmFiles.<name>`); a scene that belongs in Blender, Unity or Godot runs as `"engine": {"type": "command", "command": [...]}`, which renders PNG frames (or, with `"stream": true`, raw RGBA into a FIFO) from a job file while motion-use keeps sound, delivery checks and release. Draw subtitles in `composition` as a transparent overlay so the text check still measures them. Contract: film.md → External engines.
 
 Narration is required by default: write it per shot (each language), then `motion-use voiceover <dir>`; it must fit its shot window, so shorten the script or retime the shot, never truncate. `M.captions(c, t)` draws subtitles from it. `voiceover:false` only when the user wants a silent film.
+
+`voiceover --json` reports actual clip paths, formats, seconds and window fit. Mark a shot `"duration":"narration","tail":0.4`, generate the voice, then `motion-use retime <dir>` proposes `film.retimed.json` with frame-aligned windows; the original and brief target are preserved. Do this before placing external audio/cues/footage. With Azure, opt into `voiceover --engine azure --word-timing` for measured word boundaries (optional pinned SDK via uv). `M.at('phrase', {shot:'id'})` uses only cache-matched service timestamps; missing/ambiguous timing throws. For imported or manually checked timing, declare `captions.<lang>` and `cues.<lang>` and use `M.cue('slug')`, preserving estimated flags. Never call sentence interpolation measured word timing.
+
+For geographic explainers, `motion-use geo world --out map.json` projects the bundled illustrative Natural Earth boundaries; pass a local GeoJSON/TopoJSON for your own data. Load the compiled JSON through `files`; `M.map`, `geoPoint`, `route`, `arrow`, `pin` and updating `list` handle generic map motion. Use actual historical geometry for historical boundary claims. Custom `fonts` need a local font and licence file; `captionStyle` configures subtitle plate/size/position. Contract and limits: film.md.
 
 ## 3 · Iterate cheaply
 
@@ -60,6 +68,10 @@ motion-use verify --manifest <dir>/out/release/release-manifest.json <file.mp4> 
 motion-use voiceover check <dir>          # whisper hears each clip; flags misreads
 motion-use verify <file.mp4> --json      # any MP4, without re-rendering
 ```
+
+For editing, render `--no-captions` and/or `--no-bgm` variants (distinct filenames), then `motion-use handoff <dir> --out <fresh-dir>`. The handoff has SRT, separate source audio, a shot timeline, declared inputs, provenance and hashes; it is not a native editor draft. Subtitles drawn with `M.captions` are suppressed, custom text and baked footage text remain. `handoff --check --out <package>` verifies exported bytes. Check source permissions separately. Source declarations go in `film.json` → `provenance`.
+
+For a longer film, render matching parts, write `parts.json` with `{name, parts:[{file, from?, to?, manifest?}]}`, then `motion-use concat parts.json --out <fresh-dir> --release`. It checks supplied part manifests, normalizes the full soundtrack, measures join windows and writes a master with part hashes/snapshots and a release manifest. Watch and listen across every join; measurements do not establish continuity. Remote rendering and safe synchronization are documented in film.md.
 
 Render writes MP4s, covers and `review/<id>/report.json` measured on the delivered file: decode, duration/fps/size, loudness (-14 LUFS / -1 dBTP), narration present in the mix, and motion lights. For films a red light fails delivery: slideshow pacing, empty mid-film frames, mostly blue-purple. Fix the film; use `--allow-static "reason"` / `--allow-blue-purple "reason"` only when the subject needs it, and tell the user.
 

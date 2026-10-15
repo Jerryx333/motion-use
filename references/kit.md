@@ -22,7 +22,10 @@ Every time-based helper is `(c, t, …positional, options)`; points are `[x, y]`
 
 | helper | does |
 |---|---|
-| `shoot(c, t, events, drawWorld, base)` | camera: `[at, "push", [x,y]?, k]` · `[at, "pan", [x,y]]` · `[at, "to", [x,y], z]` · `[at, "slam"]` · `[at, "shake", amp]` · `[at, "cut", [x,y], z]`; `base` = `{x, y, z}` at start |
+| `shoot(c, t, events, drawWorld, base)` | camera: `[at, "push", [x,y]?, k]` · `[at, "pan", [x,y]]` · `[at, "to", [x,y], z]` · `[at, "slam"]` · `[at, "shake", amp]` · `[at, "cut", [x,y], z]`; `base` = `{x, y, z, anchor?}` at start; object camera events accept `anchor:[screenX,screenY]` |
+| `cue(name)`, `hasCue(name)`, `at(phrase, {shot, occurrence})` | named imported keyword seconds, or cache-matched measured speech boundaries; missing timing throws |
+| `list(c, t, [[at, items], …], {x,y,gap})` | updating legend with non-overlapping text handoff; shared items drawn once |
+| `map(c,t,geo,{fills})`, `geoPoint(geo,lon,lat)`, `route` / `arrow` / `pin` | compiled GeoJSON regions, timed fills and geographic marks; see film.md |
 | `captions(c, t)` | narration subtitles from the voice track (sentence cues; estimated when the service gave none); long lines wrap into two balanced lines |
 | `captions(c, t, [[text, start, end], …])`, `caption(c, t, text, start, end, {x, y, align, size, plate, lines})` | beat titles in a masked slot: rise 0.35 s, hold, leave 0.18 s |
 | `words(c, t, text, [x,y], {at, stagger, times, style: rise\|slam\|pop\|type, emphasis: [words], until})` | kinetic words entering in turn |
@@ -50,7 +53,7 @@ Every time-based helper is `(c, t, …positional, options)`; points are `[x, y]`
            "narration": {"en": "Sales peaked in the third quarter."}}]
 ```
 
-Palettes: `paper` `poster` `ink` `navy` `bauhaus` `snow` `wood` `chalk` `whiteboard`, or 3–6 hex colors. Music moods: `promo` `explainer` `pulse` `chiptune` `pentatonic` `ambient`, or a song: `{"file": "audio/song.wav", "bpm": 128, "from": 1.3}` from `motion-use beats`. Sound effects take `"align": "peak"` to land their hit on `start`; `"loop": true` checks the last frame leads into the first. Beat-driven briefs and the one-shape morph: [briefing.md](briefing.md). Footage frames are extracted at build time (≤ 5,400 per film); sound only at rate 1.
+Palettes: `paper` `poster` `ink` `navy` `bauhaus` `snow` `wood` `chalk` `whiteboard`, or 3–6 hex colors. Music moods: `promo` `explainer` `pulse` `chiptune` `pentatonic` `ambient`, or a song: `{"file": "audio/song.wav", "bpm": 128, "from": 1.3}` from `motion-use beats`. Original documentary accents: `stamp`, `thud`, `paper`, `explosion`, `train`, `map-pin`, `page-turn`, `low-boom` (stylized, not historical recordings). Sound effects take `"align": "peak"` to land their hit on `start`; `"loop": true` checks the last frame leads into the first. Beat-driven briefs and the one-shape morph: [briefing.md](briefing.md). Footage frames are extracted at build time (≤ 5,400 per film); sound only at rate 1.
 
 ## Cheap iteration
 
@@ -72,3 +75,5 @@ Look at an image only when the numbers do not settle the question. A `demo_simil
 - [examples/data-story](../examples/data-story/): finance chart, data in `film.json`, a bar that shrinks when its value changes.
 - [examples/whiteboard](../examples/whiteboard/): marker on a wide board, the camera framing each idea, then the whole.
 - [examples/kinetic](../examples/kinetic/): one heavy word per beat, flat colour chapters, a stroke that crosses out the last word.
+
+The production workflow, preview directions, style/shot gallery, speech timing and layered editing handoff are in [production.md](production.md). For frame timing from actual narration use `retime`; for measured Azure word boundaries use `voiceover --word-timing`. Catalogue studies are intentionally silent.

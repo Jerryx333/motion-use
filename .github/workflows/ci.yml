@@ -59,7 +59,8 @@ jobs:
           name: smoke-${{ matrix.os }}
           path: |
             examples/*/out/*.mp4
-            examples/*/out/stills/*-sheet.png
+            examples/*/out/preview/*.mp4
+            examples/*/out/stills/**/*.png
           if-no-files-found: ignore
   installer:
     runs-on: ubuntu-latest

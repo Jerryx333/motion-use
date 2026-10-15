@@ -51,6 +51,11 @@ import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry,
 import { compositeArgs, compositeStill, frameName, frameRange, runEngine, splitFrames, startStreamingEngine } from "./engine.mjs";
 import { chooseRenderer, findRenderer, nativeStills, nativeWorkers, pair, streamRender, unsupportedContext } from "./native.mjs";
 import { mixAudio } from "./mix.mjs";
+import { catalog, writeGallery, initStudy } from "./catalog.mjs";
+import { concatParts } from "./concat.mjs";
+import { exportGeo } from "./geo.mjs";
+import { retimeFilm } from "./retime.mjs";
+import { exportHandoff, checkHandoff } from "./handoff.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(
@@ -86,6 +91,13 @@ Usage: motion-use <command> [options]
   beats <audio>      Find a song's tempo, first downbeat, bar loudness and drop; prints the film.json
                       music line that puts film second 0 on a downbeat (--from/--to: analyse a range)
   compare <a> <b>     Put frames of two videos side by side (--times 1.5,4 --out compare.png)
+  catalog [styles|shots] [id]   List original style/shot cards; --out <fresh-dir> writes a live preview gallery
+  study <id> <dir>    Create a renderable 6-second study from a catalog card (illustrative, intentionally silent)
+  concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
+  geo <json>          Project/simplify local GeoJSON or TopoJSON into map data (--out <new.json>)
+  retime [film]       Propose shot windows from actual narration (shot.duration: "narration", tail); --out JSON
+  handoff [film]      Export declared sources, separate audio, SRT, shot timeline and provenance hashes
+                      (--out <fresh-dir>; --check --out <package> verifies exported bytes)
   doctor              Check Node, ffmpeg, Chrome and the bundled engine (--install-browser fetches Chrome)
   upgrade             Update motion-use and its skill (--check only looks)
 
@@ -104,6 +116,9 @@ Options for still/render:
                       (reading-time and contrast notes stay warnings)
   --no-asr            render: skip the narration transcription check (--asr-model small|medium|large-v3)
   --no-text-check     still/render: skip measuring drawn text against the frame and safe area
+  --no-captions       film still/render: suppress M.captions subtitles; custom drawn text remains
+  --no-bgm            film still/render: omit background music, retain narration and SFX
+                      These variants use distinct filenames and keep the original film.json unchanged.
   --allow-static "why"       Deliver a film that the motion check reads as a slideshow, recording why
   --allow-blue-purple "why"  Deliver a blue-purple film (e.g. a Starry Night study), recording why
   --renderer <r>      still/render: native (motion-render: Skia on the CPU, frames piped straight into ffmpeg,
@@ -141,6 +156,12 @@ export async function main(argv) {
     reference,
     beats,
     compare,
+    catalog: catalogCmd,
+    study: studyCmd,
+    handoff: handoffCmd,
+    retime: retimeCmd,
+    geo: geoCmd,
+    concat: concatCmd,
     doctor,
     upgrade: upgradeCmd,
   };
@@ -196,9 +217,18 @@ export async function main(argv) {
         "asr-model": { type: "string" },
         "no-asr": { type: "boolean" },
         "no-text-check": { type: "boolean" },
+        "no-captions": { type: "boolean" },
+        "no-bgm": { type: "boolean" },
+        "word-timing": { type: "boolean" },
         "no-video": { type: "boolean" },
         workers: { type: "string" },
         renderer: { type: "string" },
+        projection: { type: "string" },
+        width: { type: "string" },
+        height: { type: "string" },
+        simplify: { type: "string" },
+        object: { type: "string" },
+        "id-field": { type: "string" },
       },
     });
   } catch (e) {
@@ -465,6 +495,8 @@ async function validate(o, [briefPath]) {
 
 async function each(briefPath, o, fn) {
   const c = check(briefPath, o);
+  if (!c.film && (o["no-captions"] || o["no-bgm"]))
+    return { code: fail("--no-captions/--no-bgm require an authored film", o.json) };
   if (!c.ok) {
     if (o.json)
       console.log(JSON.stringify({ ok: false, ...c.report }, null, 2));
@@ -505,9 +537,9 @@ async function each(briefPath, o, fn) {
   const results = [];
   for (const l of c.langs)
     for (const f of c.formats) {
-      const id = `${c.brief.name}-${l}-${f}`;
+      const id = `${c.brief.name}-${l}-${f}${o["no-captions"] ? "-no-captions" : ""}${o["no-bgm"] ? "-no-bgm" : ""}`;
       const proj = c.film
-        ? await buildFilm(c.film, l, f, path.join(out, ".build", id), { range: o.range, guides: Boolean(o.guides) && !o._render })
+        ? await buildFilm(c.film, l, f, path.join(out, ".build", id), { range: o.range, guides: Boolean(o.guides) && !o._render, noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) })
         : await buildProject(c.brief, l, f, path.join(out, ".build", id));
       if (!c.film) {
         proj.narrationTracks = proj.scenes
@@ -584,7 +616,7 @@ async function render(o, [briefPath]) {
     }
     if (!o.json)
       console.error(`restored snapshot ${found.record.id} (${found.record.created}); output goes to ${path.join(out, `snapshot-${found.record.id}`)}`);
-    return render({ ...o, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
+    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
   }
   if (o.release) {
     if (o["max-size"] || o.target)
@@ -637,6 +669,7 @@ async function render(o, [briefPath]) {
     const generated = o.range ? { rows: [] } : await generateFilmNarration(c.film, {
       langs: c.langs,
       engine: o.engine,
+      wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
     });
     const failed = generated.rows.filter((r) => r.status === "error");
@@ -729,7 +762,7 @@ async function render(o, [briefPath]) {
       const c = checkFilm(briefPath, { ...o });
       const outDir = path.resolve(o.out ?? path.join(path.dirname(filmFile), "out"));
       try {
-        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION }).id;
+        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) } }).id;
       } catch (e) {
         if (!o.json) console.error(`warning: snapshot not saved: ${e.message}`);
       }
@@ -785,8 +818,8 @@ async function render(o, [briefPath]) {
         return { ok: true, id, preview: true, file: previewFile, from, to, motion, renderer: usedRenderer(brief, o) };
       }
       const file = path.join(
-        out,
-        `${id}${proj.film && proj.narrationTracks.length ? "-VO" : ""}.mp4`,
+        q === "draft" ? path.join(out, "preview") : out,
+        `${id}${proj.film && proj.narrationTracks.length ? "-VO" : ""}${q === "draft" ? "-draft" : ""}.mp4`,
       );
       const blocked = guardOutput(out, file, o.force);
       if (blocked) return { ok: false, id, error: blocked };
@@ -879,15 +912,17 @@ async function render(o, [briefPath]) {
             o["allow-blue-purple"] ?? brief.look?.allowBluePurple ?? null,
         },
       });
-      if (!verification.ok)
+      if (!verification.ok && q !== "draft")
         return {
           ok: false,
           id,
           error: verification.errors.join("; "),
           verification: { ok: false, report: verification.report },
         };
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       commitOutput(out, tmp, file);
       verification.file = file;
+      if (q === "draft") verification.preview = true;
       // Independent review: notes by someone who did not make the film, watching only the MP4.
       // Listed by name only; the report never vouches for what they say.
       const reviewDir = path.join(path.dirname(resolveProject(briefPath)), "reviews");
@@ -905,6 +940,7 @@ async function render(o, [briefPath]) {
         for (const line of describeNarration({ lines: verification.narration_check.lines ?? [] })) verification.warnings.push(line);
       }
       verification.snapshot = snapshot;
+      verification.variants = { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) };
       // pixels differ slightly between renderers: the report says which one made this file
       verification.renderer = usedRenderer(brief, o);
       fs.writeFileSync(
@@ -1365,6 +1401,7 @@ async function voiceover(o, [briefPath, ...rest]) {
       langs: c.langs,
       engine: o.engine,
       force: o.force,
+      wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
     });
     const post = checkFilm(briefPath, { ...o, requireNarration: c.langs });
@@ -1375,7 +1412,13 @@ async function voiceover(o, [briefPath, ...rest]) {
           {
             ok,
             engine: res.engine,
-            files: res.rows,
+            files: res.rows.map((row) => {
+              const track = post.film.tracks.find((a) => a.id === row.scene && a.lang === row.lang && a.role === "voiceover");
+              const window = post.film.narrationPlans.find((p) => p.id === row.scene);
+              return { ...row, ...(track ? { file: track.file, format: path.extname(track.file).slice(1), seconds: track.length,
+                window: window ? { start: window.start, end: window.end } : null,
+                fits: window ? track.length <= window.end - window.start + 0.02 : null } : {}) };
+            }),
             errors: post.report.errors,
           },
           null,
@@ -1452,11 +1495,11 @@ function projectNarration(briefPath, o) {
 
 function runNarrationCheck(briefPath, o) {
   const { items, dir } = projectNarration(briefPath, o);
-  return checkNarration(items, { dir, model: o["asr-model"], log: o.json ? () => {} : (m) => console.error(m) });
+  return checkNarration(items, { dir, model: o["asr-model"], force: Boolean(o._refreshAsr), log: o.json ? () => {} : (m) => console.error(m) });
 }
 
 async function voiceoverCheck(o, [briefPath]) {
-  const r = runNarrationCheck(briefPath, o);
+  const r = runNarrationCheck(briefPath, { ...o, _refreshAsr: Boolean(o.force) });
   if (o.json) console.log(JSON.stringify(r, null, 2));
   else if (r.skipped) console.error(`motion-use: narration check skipped: ${r.skipped}`);
   else {
@@ -1505,7 +1548,7 @@ async function still(o, [briefPath]) {
       shotTimes = picked.flatMap((s) => [
         s.start + Math.min(0.25, s.duration / 4),
         s.start + s.duration / 2,
-        Math.max(s.start, s.start + s.duration - 1 / proj.fps),
+        Math.max(s.start + s.duration / 2, s.start + s.duration - 0.3),
       ]);
     }
     // Default: one frame per scene, once its content has finished arriving.
@@ -1519,7 +1562,9 @@ async function still(o, [briefPath]) {
       );
     if (times.some((t) => t >= proj.total))
       return { ok: false, id, error: "--at must be within the film duration" };
-    const dir = path.join(out, "stills", id);
+    const selection = shotIds ? `shot-${shotIds.join("-")}` : at ? "at" : everyBeats ? `beats-${everyBeats}` : "review";
+    const run = `${selection}-${crypto.randomUUID().slice(0, 8)}`;
+    const dir = path.join(out, "stills", id, run);
     claimDir(dir);
     // Authored films: draw the first time again at the end, after the page has drawn the others.
     // The renderer seeks backward and splits frames among workers, so a picture that depends on
@@ -1573,14 +1618,18 @@ async function still(o, [briefPath]) {
           `warning: ${id}: drawFrame drew ${times[0].toFixed(2)}s differently the second time; it carries state between frames (a counter, a mutated array, a cached result). Compute every value from t, or the MP4 flickers.`,
         );
     }
-    const sheetFile = path.join(out, "stills", `${id}-sheet.png`);
+    const sheetFile = path.join(dir, "sheet.png");
     const blocked = guardOutput(out, sheetFile, o.force);
     if (blocked) return { ok: false, id, error: blocked };
     const tmpSheet = path.join(dir, ".sheet.png");
+    fs.writeFileSync(path.join(dir, "frames.json"), JSON.stringify(times.map((time, i) => ({ time, shot: proj.scenes.find((s) => time >= s.start && time < s.start + s.duration)?.id ?? null, file: pngs[i] })), null, 2) + "\n");
     const sheet = contactSheet(pngs, tmpSheet, proj.fmt)
       ? (commitOutput(out, tmpSheet, sheetFile), sheetFile)
       : null;
-    if (!o.json) console.log(sheet ?? `${dir} (contact sheet not created)`);
+    if (!o.json) {
+      console.log(sheet ?? `${dir} (contact sheet not created)`);
+      for (let i = 0; i < pngs.length; i++) console.log(`  ${times[i].toFixed(3)}s ${proj.scenes.find((s) => times[i] >= s.start && times[i] < s.start + s.duration)?.id ?? "frame"}: ${pngs[i]}`);
+    }
     // Text check over the whole film, not only the sampled frames.
     let text = null;
     if (proj.film && !o["no-text-check"] && !proj.range) {
@@ -1997,4 +2046,49 @@ async function upgradeCmd(o) {
     check: o.check,
     json: o.json,
   });
+}
+
+async function catalogCmd(o, [kind, id, ...extra]) {
+  if (extra.length) return fail('catalog [styles|shots] [id]', o.json);
+  const cards = catalog(kind, id);
+  const result = o.out ? writeGallery(o.out, cards) : { ok: true, cards };
+  if (o.json) console.log(JSON.stringify(result, null, 2));
+  else if (o.out) console.log(result.gallery);
+  else for (const c of cards) console.log(`${c.kind} ${c.id} — ${c.title}\n  ${c.use}${id ? `\n  ${c.mechanism}\n  Parameters: ${JSON.stringify(c.parameters)}\n  ${c.pitfalls.join('\n  ')}` : ''}`);
+  return 0;
+}
+
+async function studyCmd(o, [id, dir, ...extra]) {
+  if (!id || !dir || extra.length) return fail('study <catalog-id> <fresh-dir>', o.json);
+  const r = initStudy(id, dir);
+  console.log(o.json ? JSON.stringify(r, null, 2) : `${r.film}\nRender with: motion-use render ${JSON.stringify(path.dirname(r.film))} --allow-code --quality draft`);
+  return 0;
+}
+
+async function handoffCmd(o, [film, ...extra]) {
+  if (extra.length) return fail('handoff [film] --out <directory>', o.json);
+  const r = o.check ? checkHandoff(o.out ?? path.join(path.dirname(resolveProject(film)), 'out', 'handoff')) : exportHandoff(film, o);
+  if (o.json) console.log(JSON.stringify(r, null, 2));
+  else if (o.check) console.log(r.ok ? `handoff bytes OK (${r.files} files)` : r.errors.join('\n'));
+  else console.log(`${r.out}\n${r.files} files; ${r.provenanceNeedsReview} source permissions need review; ${r.estimatedCaptions} estimated subtitles. Not a release master or native editor draft.`);
+  return r.ok ? 0 : 1;
+}
+
+async function retimeCmd(o, [film, ...extra]) {
+  if (extra.length) return fail("retime [film] --out <new-json-beside-film>", o.json);
+  const r = retimeFilm(film, o);
+  console.log(o.json ? JSON.stringify(r, null, 2) : `${r.film} (${r.duration}s)\n${r.warning}`);
+  return 0;
+}
+
+async function geoCmd(o,[file,...extra]) {
+  if(!file || extra.length) return fail("geo <GeoJSON-or-TopoJSON> --out <new-map.json>",o.json);
+  const r=exportGeo(file,{...o,idField:o["id-field"]});
+  console.log(o.json?JSON.stringify(r,null,2):`${r.file} (${r.regions} regions)\n${r.notice}`);return 0;
+}
+
+async function concatCmd(o,[file,...extra]) {
+  if(!file||extra.length)return fail("concat <parts.json> --out <fresh-dir> [--release]",o.json);
+  const r=concatParts(file,{...o,version:VERSION});
+  console.log(o.json?JSON.stringify(r,null,2):`${r.file}\n${r.report}${r.release_manifest?`\n${r.release_manifest}`:""}`);return r.ok?0:1;
 }

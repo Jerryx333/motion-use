@@ -209,6 +209,33 @@ function flashes(file, w, h) {
   return { per_s: best / 2, at: at === null ? null : round(at, 2), windows };
 }
 
+// Colour changes the gray difference misses: a map province turning from blue to red barely moves
+// luminance, and a 0.4 s recolour spreads over several analysis frames. Per analysis frame pair:
+// the share of pixels (subtitle band masked) whose largest channel moves by ≥ 24. Measured on an
+// 8-minute map film, recolours and pushes gave 2.2–2.7 region events per 10 s while fast_ratio stayed
+// at 0.017–0.022; the approved launch promo changes ≥ 5% of the frame on half its frame pairs.
+const REGION = { width: 160, delta: 24, area: 0.05 };
+function colorChange(file, w, h) {
+  const width = REGION.width,
+    height = Math.max(2, Math.round((h * width) / w / 2) * 2),
+    hc = Math.round(height * (1 - (h > w ? 0.18 : 0.15)));
+  const raw = decode(file, FPS, width, height, "rgb24"),
+    px = width * height,
+    n = Math.floor(raw.length / (px * 3)),
+    len = width * hc;
+  const share = new Float64Array(Math.max(0, n - 1));
+  for (let i = 0; i + 1 < n; i++) {
+    let hit = 0;
+    for (let k = 0; k < len; k++) {
+      const a = (i * px + k) * 3,
+        b = a + px * 3;
+      if (Math.max(Math.abs(raw[a] - raw[b]), Math.abs(raw[a + 1] - raw[b + 1]), Math.abs(raw[a + 2] - raw[b + 2])) >= REGION.delta) hit++;
+    }
+    share[i] = hit / len;
+  }
+  return share;
+}
+
 // cuts: authored hard-cut times in seconds, always treated as transitions (not as motion).
 export function measureMotion(file, { cuts = [] } = {}) {
   const { width: W0, height: H0 } = probe(file);
@@ -289,8 +316,12 @@ export function measureMotion(file, { cuts = [] } = {}) {
     run = d[i] < STILL ? run + 1 : 0;
     if (run > longest) ((longest = run), (longestAt = i - run + 1));
   }
-  // Events: cuts, dissolves and the start of each fast run, merged within 0.3 s.
-  const events = [...cutStarts, ...diss.map((x) => (x.a + x.b) >> 1)];
+  // Region changes in colour inside shots (a recolour, an arrow drawn, a stamp landing).
+  const region = colorChange(file, W0, H0),
+    regionFull = Array.from({ length: n - 1 }, (_, i) => !trans[i] && (region[i] ?? 0) >= REGION.area);
+  const regionStarts = regionFull.flatMap((v, i) => (v && !regionFull[i - 1] ? [i] : []));
+  // Events: cuts, dissolves, the start of each fast run and of each region change, merged within 0.3 s.
+  const events = [...cutStarts, ...diss.map((x) => (x.a + x.b) >> 1), ...regionStarts];
   fastFull.forEach((v, i) => v && !fastFull[i - 1] && events.push(i));
   events.sort((a, b) => a - b);
   const merged = events.filter((t, i, all) => i === 0 || t - all[i - 1] > 0.3 * FPS);
@@ -329,7 +360,7 @@ export function measureMotion(file, { cuts = [] } = {}) {
   const bp = bluePurple(file, W0, H0),
     fl = flashes(file, W0, H0);
   return {
-    method: "12 fps, 320 px gray, subtitle band masked; cuts by difference spike + histogram change (heuristic) plus authored cuts",
+    method: "12 fps, 320 px gray, subtitle band masked; cuts by difference spike + histogram change (heuristic) plus authored cuts; region events: ≥ 5% of a 160 px colour frame changing by ≥ 24",
     seconds: round(seconds, 2),
     cuts: cutStarts.map((i) => round((i + 1) / FPS, 2)),
     dissolves: diss.map((x) => ({ start: round(x.start, 2), end: round(x.end, 2) })),
@@ -339,6 +370,8 @@ export function measureMotion(file, { cuts = [] } = {}) {
     longest_still_s: round(longest / FPS, 2),
     longest_still_at: round(longestAt / FPS, 2),
     events_per_10s: round((merged.length / seconds) * 10, 2),
+    color_change_ratio: round(count ? regionFull.filter(Boolean).length / count : 0, 4),
+    region_events_per_10s: round((regionStarts.length / seconds) * 10, 2),
     max_event_gap_s: round(maxGap / FPS, 2),
     max_event_gap_at: round(gapAt / FPS, 2),
     worst_window_fast_ratio: round(worst, 4),
@@ -365,6 +398,12 @@ export function gradeMotion(m, { allowStatic = null, allowBluePurple = null } = 
     if (level === "red" && key === "fast_ratio" && m.seconds < SHORT_S)
       ((level = "yellow"), (note = `shorter than ${SHORT_S}s: calibrated on longer films`));
     if (level === "red" && key === "fast_ratio" && allowStatic) ((level = "yellow"), (note = `allowed: ${allowStatic}`));
+    // Low fast_ratio with frequent region events is a different problem from a slideshow: things
+    // happen, but each changes little of the picture. Say so; the light stays as measured.
+    if (key === "fast_ratio" && level !== "green" && (m.region_events_per_10s ?? 0) >= 1.5) {
+      const hint = `${m.region_events_per_10s} region changes per 10 s, but each moves little of the frame (low contrast or small): enlarge what moves, push the camera further, or raise contrast`;
+      note = note ? `${note}; ${hint}` : hint;
+    }
     if (level === "red" && key === "blue_purple_share" && allowBluePurple)
       ((level = "yellow"), (note = `allowed: ${allowBluePurple}`));
     rows.push({ metric: key, value: v, level, ...(note ? { note } : {}) });

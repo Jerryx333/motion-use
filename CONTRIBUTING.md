@@ -21,7 +21,7 @@ npm run lint && npm test
   node bin/motion-use.mjs still examples/mail-use/brief.json     # promo
   ```
 
-  Put the contact sheets (`examples/*/out/stills/*-sheet.png`) in the pull request.
+  Put the contact sheets (`examples/*/out/stills/**/sheet.png`) in the pull request.
 - Changes to timing or audio: render one MP4 with `render --quality draft` and check it plays through.
 
 ## Rules of the codebase
@@ -33,4 +33,4 @@ npm run lint && npm test
 
 ## Releasing (maintainers)
 
-Bump `version` in `package.json` and `.claude-plugin/plugin.json`, then push a tag `vX.Y.Z`. The release workflow packages the archive, checks that it installs, and attaches it and its `.sha256` to the GitHub Release.
+Bump `version` in `package.json`, the root entry in `package-lock.json`, `.claude-plugin/plugin.json`, `native/motion-render/Cargo.toml` and the motion-render entry in `native/Cargo.lock`, then push a tag `vX.Y.Z`. The release workflow packages the archive, checks that it installs, and attaches it and its `.sha256` to the GitHub Release.

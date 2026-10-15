@@ -3,6 +3,7 @@
 # stdin:  {"model": "small", "items": [{"file": "...", "lang": "zh"}], "texts": ["script line", ...]}
 # stdout: {"items": [{"file": "...", "text": "..."}],
 #          "chars": {"重": ["chong", "zhong"], ...},   readings of every CJK character seen
+#          "tones": {"重": ["chong2", "zhong4"], ...},  the same readings with tones (TONE3)
 #          "phrases": ["重视", ...]}                    2-3 character dictionary words seen
 import json
 import re
@@ -38,7 +39,7 @@ for it in req["items"]:
     items.append({"file": it["file"], "text": "".join(s.text for s in segments).strip()})
 
 cjk = re.compile(r"[㐀-鿿]")
-chars, phrases = {}, set()
+chars, tones, phrases = {}, {}, set()
 try:
     from pypinyin import Style, pinyin
     from pypinyin.constants import PHRASES_DICT
@@ -48,6 +49,7 @@ try:
         for c in text:
             if cjk.match(c) and c not in chars:
                 chars[c] = sorted(set(pinyin(c, style=Style.NORMAL, heteronym=True)[0]))
+                tones[c] = sorted(set(pinyin(c, style=Style.TONE3, heteronym=True, neutral_tone_with_five=True)[0]))
         for n in (2, 3):
             for i in range(len(text) - n + 1):
                 w = text[i : i + n]
@@ -55,4 +57,4 @@ try:
                     phrases.add(w)
 except ImportError:
     pass
-json.dump({"items": items, "chars": chars, "phrases": sorted(phrases)}, sys.stdout, ensure_ascii=False)
+json.dump({"items": items, "chars": chars, "tones": tones, "phrases": sorted(phrases)}, sys.stdout, ensure_ascii=False)

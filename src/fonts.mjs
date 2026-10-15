@@ -25,7 +25,7 @@ function covered(file) {
 
 /** Characters in `text` that no available font can draw (bundled, plus the brief's own fonts). */
 export function missingGlyphs(text, custom = {}) {
-  const sets = [FONTS.sans, FONTS.mono, custom.sans?.file, custom.mono?.file].filter(Boolean).map(covered);
+  const sets = [FONTS.sans, FONTS.mono, ...Object.values(custom).map((v) => v?.file)].filter(Boolean).map(covered);
   const missing = new Set();
   for (const ch of text) {
     const cp = ch.codePointAt(0);
@@ -45,7 +45,7 @@ export async function writeSubsets(text, outDir, custom = {}) {
   const all = text + TEMPLATE_TEXT + ASCII;
   const sizes = {};
   const jobs = { ...FONTS };
-  for (const k of ["sans", "mono"]) if (custom[k]?.file) {
+  for (const k of Object.keys(custom)) if (custom[k]?.file) {
     jobs[`brand-${k}`] = custom[k].file;
     fs.copyFileSync(custom[k].license, path.join(outDir, `LICENSE-brand-${k}.txt`));
   }
