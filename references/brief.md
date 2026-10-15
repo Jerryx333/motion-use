@@ -112,12 +112,13 @@ Players, feeds and GitHub use the first frame as the thumbnail. With the default
 
 Narration can be recorded or generated. Either way it ends up at `<voiceover.dir>/<lang>/<scene-id>.mp3`, and each scene stretches to fit it.
 
-- **Recorded:** put your files there. That's all.
+- **Recorded:** put your files there. Trim silence only from the end; preserve opening silence and quiet onsets. Trimming the start cut the E from “ESP” (recognized as “PSP”); even leaving 60 ms at both ends cut the nasal m from “Mac” (recognized as “Nike”). For film shot narration, estimate alignment as `shot start + 0.08 s + opening silence + pause position` within the spoken line (see [film.md](film.md)); template briefs use the scene’s actual narration start, documented under Timing below, plus opening silence and pause position.
 - **Generated:** write `narration` on the scenes, then run `motion-use voiceover <brief>`.
   - `--engine azure` uses Azure AI Speech (`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`): licensed for publishing. It is the default when those are set.
   - `--engine edge` uses the `edge-tts` CLI (`pip install edge-tts`): the same voices through Microsoft Edge's read-aloud service. Whether its audio may be published is not established, so treat it as a preview; `render` reminds you when a video uses it.
   - Default voices: `zh-CN-YunxiNeural` for `zh`, `en-US-AndrewMultilingualNeural` for `en`; set `voiceover.voices` for other languages or other voices.
-  - Generated files are recorded in `<dir>/.motion-use-voiceover.json`. Running again regenerates only lines whose text, voice, rate or engine changed. A file motion-use did not generate (your own recording) is never replaced unless you pass `--force`.
+  - Optional `voiceover.say` maps non-empty strings to strings, e.g. `{"有数": "有树"}` sends “抬头就有树” to TTS while narration, subtitles and on-screen text remain “抬头就有数”. Use it for polyphonic characters or tone sandhi read incorrectly without changing subtitles. Replacements run in descending key-length order; the cache and manifest store the resulting spoken text.
+  - Generated files are recorded in `<dir>/.motion-use-voiceover.json`. Running again regenerates only lines whose spoken text (after `say`), voice, rate or engine changed. A file motion-use did not generate (your own recording) is never replaced unless you pass `--force`.
 
 Before locking narration or rendering, audition 3–5 voices on the same, most emotional line, then choose the voice and rate.
 In a temporary brief copy, keep `narration` on one scene only, use a fresh `voiceover.dir`, and change `voiceover.voices.zh` between runs of `motion-use voiceover <brief> --lang zh`.

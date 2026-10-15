@@ -17,6 +17,12 @@ export const DEFAULT_VOICES = { zh: "zh-CN-YunxiNeural", en: "en-US-AndrewMultil
 export const MANIFEST = ".motion-use-voiceover.json";
 const sha = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
+/** Pronunciation substitutions affect speech only; keep narration for display. */
+export function spokenText(text, say = {}) {
+  for (const [from, to] of Object.entries(say).sort(([a], [b]) => b.length - a.length)) text = text.replaceAll(from, () => to);
+  return text;
+}
+
 const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
 /** SSML for one line. Exported for tests: narration text must never become markup. */
@@ -60,12 +66,23 @@ function edgeCommand(args) {
   return py && fs.existsSync(script) ? [py, [script, ...args]] : ["edge-tts", args];
 }
 
-function edge(text, voice, rate, out) {
-  const srt = `${out}.srt`;
-  const [cmd, args] = edgeCommand(["--voice", voice, `--rate=${rate}`, "--text", text, "--write-media", out, "--write-subtitles", srt]);
-  const r = spawnSync(cmd, args, { encoding: "utf8" });
+/** Retry a rejected installed Edge provider once with the latest package through uvx. */
+export function runEdgeTts(args, { run = spawnSync, command } = {}) {
+  const [cmd, commandArgs] = command ?? edgeCommand(args);
+  let r = run(cmd, commandArgs, { encoding: "utf8" });
+  const rejected = r.status !== 0 && /403/.test(`${r.stderr ?? ""}\n${r.stdout ?? ""}`);
+  if (rejected) {
+    const uvx = run("which", ["uvx"], { encoding: "utf8" });
+    if (uvx.status === 0) r = run("uvx", ["--quiet", "--from", "edge-tts", "edge-tts", ...args], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error("edge-tts was rejected (403); upgrade it: uv tool upgrade edge-tts, or pip install -U edge-tts");
+  }
   if (r.error?.code === "ENOENT") throw new Error("edge-tts is not installed (pip install edge-tts, or uv tool install edge-tts)");
   if (r.status !== 0) throw new Error(`edge-tts failed: ${(r.stderr || r.stdout).trim().split("\n").pop()}`);
+}
+
+function edge(text, voice, rate, out) {
+  const srt = `${out}.srt`;
+  runEdgeTts(["--voice", voice, `--rate=${rate}`, "--text", text, "--write-media", out, "--write-subtitles", srt]);
   // Sentence cues timed by the voice service; subtitles use them instead of an estimate.
   try {
     return parseSrt(fs.readFileSync(srt, "utf8"));
@@ -136,8 +153,9 @@ export async function generateVoiceover(brief, { langs = brief.languages, engine
     const voice = vo.voices[lang] ?? DEFAULT_VOICES[lang];
     const rate = vo.rates[lang] ?? "+0%";
     for (const scene of brief.scenes) {
-      const text = scene.narration?.[lang];
-      if (!text) continue;
+      const narration = scene.narration?.[lang];
+      if (!narration) continue;
+      const text = spokenText(narration, vo.say);
       const rel = path.join(lang, `${scene.id}.mp3`);
       const out = path.join(vo.dir, rel);
       const row = { scene: scene.id, lang, file: out, engine, voice };

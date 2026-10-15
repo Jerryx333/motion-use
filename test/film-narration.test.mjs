@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { initFilm, checkFilm, buildFilm } from "../src/film.mjs";
+import { initFilm, checkFilm, buildFilm, filmCaptions } from "../src/film.mjs";
+import { MANIFEST } from "../src/voiceover.mjs";
+import { narrationItems, checkNarration } from "../src/narration-check.mjs";
 import {
   buildNarrationStem,
   verifyNarration,
@@ -23,6 +26,47 @@ const tone = (file, freq, seconds = 1) =>
     `sine=frequency=${freq}:duration=${seconds}`,
     file,
   ]);
+
+test("film say validation, original captions and substituted narration checks", () => {
+  const dir = temp();
+  initFilm({ lang: "zh", format: "square" }, dir);
+  const file = path.join(dir, "film.json");
+  const data = JSON.parse(fs.readFileSync(file));
+  data.narration = { zh: "抬头就有数。" };
+  data.voiceover = { say: { "有数": "有树" } };
+  fs.writeFileSync(file, JSON.stringify(data));
+  let c = checkFilm(dir);
+  assert.equal(c.ok, true);
+  assert.deepEqual(c.film.narrationConfig.say, data.voiceover.say);
+  const voDir = c.film.narrationConfig.dir;
+  fs.mkdirSync(path.join(voDir, "zh"), { recursive: true });
+  const audio = path.join(voDir, "zh", "narration.mp3");
+  fs.writeFileSync(audio, "mock audio");
+  const sha = crypto.createHash("sha256").update(fs.readFileSync(audio)).digest("hex");
+  const manifest = { [path.join("zh", "narration.mp3")]: { text: "抬头就有树。", sha, cues: [{ text: "抬头就有树。", start: 0, end: 1 }] } };
+  fs.writeFileSync(path.join(voDir, MANIFEST), JSON.stringify(manifest));
+  const tracks = [{ id: "narration", file: audio, start: 0.1, length: 1 }];
+  const captions = filmCaptions(c.film, "zh", tracks);
+  assert.equal(captions.map((cue) => cue.text).join(""), "抬头就有数。");
+  assert.ok(captions.every((cue) => cue.estimated));
+  for (const project of [c.film, { voiceover: c.film.narrationConfig, scenes: c.film.narrationPlans }]) {
+    const items = narrationItems(project);
+    assert.equal(items[0].text, "抬头就有树。");
+    const result = checkNarration(items, { run: ({ texts }) => {
+      assert.deepEqual(texts, ["抬头就有树。"]);
+      return { items: [{ file: audio, text: "抬头就有树。" }], chars: {}, phrases: [] };
+    } });
+    assert.equal(result.ok, true);
+    assert.equal(result.lines[0].similarity, 1);
+  }
+  fs.rmSync(audio);
+  for (const say of [null, [], "有树", { "": "树" }, { "有数": 1 }]) {
+    data.voiceover.say = say;
+    fs.writeFileSync(file, JSON.stringify(data));
+    c = checkFilm(dir);
+    assert.ok(c.report.errors.some((e) => e.path === "$.voiceover.say"));
+  }
+});
 
 test("new films default to narration; a soundtrack alone never satisfies delivery", () => {
   const dir = temp();

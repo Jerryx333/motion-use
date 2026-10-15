@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spokenText } from "./voiceover.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CJK = /[㐀-鿿]/;
@@ -169,7 +170,7 @@ export function narrationItems(project) {
     for (const [lang, text] of Object.entries(p.narration ?? {})) {
       if (typeof text !== "string" || !text.trim()) continue;
       const file = [".mp3", ".wav", ".m4a", ".aac", ".ogg"].map((e) => path.join(dir, lang, p.id + e)).find((f) => fs.existsSync(f));
-      if (file) items.push({ id: p.id, lang, text, file });
+      if (file) items.push({ id: p.id, lang, text: spokenText(text, (project.narrationConfig ?? project.voiceover)?.say), file });
     }
   return items;
 }

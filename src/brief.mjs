@@ -289,9 +289,15 @@ export function validateBrief(data, baseDir) {
         if (!entries) r.error("$.voiceover.rate", 'a rate like "+8%", or one per language like {"zh": "+8%"}');
         else for (const [l, v] of entries) typeof v === "string" && RATE_RE.test(v) ? (rates[l] = v) : r.error(one ? "$.voiceover.rate" : `$.voiceover.rate.${l}`, 'a percentage like "+8%" or "-5%"');
       }
+      let say = {};
+      if (vo.say !== undefined) {
+        if (!isObj(vo.say) || Object.entries(vo.say).some(([k, v]) => !k.length || typeof v !== "string"))
+          r.error("$.voiceover.say", 'an object mapping non-empty strings to strings, like {"有数": "有树"}');
+        else say = { ...vo.say };
+      }
       const required=vo.required ?? (Array.isArray(data.scenes)&&data.scenes.some(s=>s?.narration));
       if(typeof required!=="boolean")r.error("$.voiceover.required","true or false; false is only for deliberately unnarrated output");
-      voiceover = { dir, volume, engine, voices, rates, required };
+      voiceover = { dir, volume, engine, voices, rates, say, required };
     }
   }
 

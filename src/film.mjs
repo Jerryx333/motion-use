@@ -775,6 +775,7 @@ export function filmCaptions(film, lang, voiceTracks) {
     const rec = dir ? manifest[path.relative(dir, track.file)] : null,
       current =
         rec?.cues &&
+        // Service cue text contains pronunciation substitutions; estimate from the display script instead.
         rec.text === text &&
         rec.sha === crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex");
     if (current)
