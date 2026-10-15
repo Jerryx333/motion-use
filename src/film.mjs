@@ -874,7 +874,7 @@ export const safeBox = (w, h) =>
     ? { x: w * 0.06, y: h * 0.1, w: w * 0.8, h: h * 0.66 }
     : { x: w * 0.05, y: h * 0.06, w: w * 0.9, h: h * 0.88 };
 
-export async function buildFilm(film, lang, format, outDir, { range = null, guides = false, noCaptions = false, noBgm = false } = {}) {
+export async function buildFilm(film, lang, format, outDir, { range = null, guides = false, noCaptions = false, noBgm = false, progress = () => {} } = {}) {
   claimDir(outDir);
   const [w, h] = FILM_FORMATS[format],
     fmt = { w, h, vertical: h > w, name: format };
@@ -952,7 +952,9 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
       const voice = selectedTracks
         .filter((a) => a.role === "voiceover")
         .map((a) => ({ start: a.start, end: a.start + a.length }));
+      progress("score", "start", { lang, format });
       const { wav, score, problems } = composeMusic(film, lang, voice);
+      progress("score", "finish");
       fs.writeFileSync(path.join(outDir, rel), wav);
       fs.writeFileSync(path.join(outDir, "assets", "audio", "score.json"), JSON.stringify({ why: score.why, tempo: score.tempo, key: score.key, instruments: [...new Set(score.events.map((e) => e.instrument))].sort(), notes: score.events.length, warnings: problems.map((p) => p.message) }, null, 2));
       for (const p of problems) console.error(`warning: music score: ${p.message}`);

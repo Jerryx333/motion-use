@@ -98,10 +98,20 @@
     const src = frameSrc(v, time);
     return src ? (frameCache.get(src) ?? null) : null;
   };
+  const frameIndex = (t) => Math.floor(t * film.fps + 1e-7);
+  motion.activeShot = (t) => (film.shots ?? []).find((s) =>
+    frameIndex(t) >= Math.round(s.start * film.fps) && frameIndex(t) < Math.round(s.end * film.fps)) ?? null;
+  const setFrame = (t, outputTime = t) => {
+    view.frame = frameIndex(outputTime);
+    view.sampleTime = t;
+    view.shot = motion.activeShot(t);
+  };
   const sampleTimes = (time) => {
     const { samples, shutter } = film.motionBlur;
+    const shot = motion.activeShot(time);
+    const floor = shot ? shot.start : 0;
     return Array.from({ length: samples }, (_, i) =>
-      Math.max(0, time - (((samples - i - 0.5) / samples) * shutter) / film.fps),
+      Math.max(floor, time - (((samples - i - 0.5) / samples) * shutter) / film.fps),
     );
   };
   const missingFrames = (time) => {
@@ -155,14 +165,13 @@
       Math.min(film.duration, (Number(time) || 0) + (film.offset || 0)),
     );
     if (!ready) return;
-    const { samples, shutter } = film.motionBlur;
+    const times = sampleTimes(requested);
+    const samples = times.length;
     ctx.resetTransform();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (let i = 0; i < samples; i++) {
-      const at = Math.max(
-        0,
-        requested - (((samples - i - 0.5) / samples) * shutter) / film.fps,
-      );
+      const at = times[i];
+      setFrame(at, requested);
       scratch.resetTransform();
       scratch.clearRect(0, 0, layer.width, layer.height);
       scratch.save();
@@ -331,6 +340,7 @@
       pc.resetTransform();
       pc.clearRect(0, 0, probe.width, probe.height);
       pc.save();
+      setFrame(t);
       window.drawFrame(pc, t, film, view, motion);
       pc.restore();
       out.push({ t, boxes, plates });

@@ -1,3 +1,4 @@
+import { narrationFreshness } from "./voiceover.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { checkFilm, resolveProject, validateFilm } from "./film.mjs";
@@ -56,6 +57,9 @@ export function retimeFilm(input, { out } = {}) {
           throw new Error(
             `${lang}/${shot.id}: narration file escapes the project`,
           );
+        const freshness = narrationFreshness(voDir, clip, shot.narration[lang], checked.film.narrationConfig, lang);
+        if (!freshness.current)
+          throw new Error(`${lang}/${shot.id}: ${freshness.imported ? "unverified recording (no matching narration manifest)" : "stale narration"}; run voiceover --force to generate current speech before retime`);
         return audioSeconds(clip);
       });
       count = Math.ceil(

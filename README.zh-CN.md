@@ -160,3 +160,9 @@ motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片
 ## 许可证
 
 motion-use 使用 MIT 许可证。渲染引擎 HyperFrames 是 Apache-2.0。字体是 SIL OFL；音效是 CC0 或原创；引擎的一个依赖（`@img/sharp-libvips`）是 LGPL-3.0。所有文件和依赖都列在 [ASSETS.md](ASSETS.md)。motion-use 和 HyperFrames、Remotion 等工具的对比见 [docs/alternatives.md](docs/alternatives.md)。
+
+长片渲染可用 `--json --progress text` 查看阶段进度，或用 `--progress json`
+读取 stderr 上的 NDJSON 事件；stdout 仍只输出最终 JSON。同一 `--out` 上重叠的
+still/render 会立即报错。子命令支持 `--help`。
+镜头边界、锁恢复和 retime 的旁白校验要求见
+[影片契约](references/film.md#frame-boundaries-and-concurrent-jobs)。

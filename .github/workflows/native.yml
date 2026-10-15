@@ -67,6 +67,10 @@ jobs:
           native/target/release/motion-render render "$RUNNER_TEMP/page/index.html" --frames 0-59 --workers 2 --stream - \
             | ffmpeg -v error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -framerate 30 -i - -c:v libx264 -preset ultrafast "$RUNNER_TEMP/smoke.mp4"
           test "$(ffprobe -v error -count_frames -select_streams v -show_entries stream=nb_read_frames -of csv=p=0 "$RUNNER_TEMP/smoke.mp4")" = 60
+      - name: frame-boundary regression through encoded MP4
+        env:
+          MOTION_RENDER: ${{ github.workspace }}/native/target/release/motion-render
+        run: node --test test/issues-58-62.test.mjs
       - name: WebGL smoke test
         if: steps.angle.outputs.dir != ''
         env:

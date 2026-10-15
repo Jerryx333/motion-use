@@ -330,6 +330,10 @@ test("retime reads the actual recording extension and aligns every boundary to w
   const vo = path.join(p.dir, "voiceover", "en");
   fs.mkdirSync(vo, { recursive: true });
   wav(path.join(vo, "study.wav"), 1.25);
+  assert.throws(() => retimeFilm(p.file), /unverified recording/);
+  fs.writeFileSync(path.join(p.dir, "voiceover", ".motion-use-voiceover.json"), JSON.stringify({
+    "en/study.wav": { text: "Test recording", engine: "edge", voice: "en-US-AndrewMultilingualNeural", rate: "+0%", sha: crypto.createHash("sha256").update(fs.readFileSync(path.join(vo, "study.wav"))).digest("hex") }
+  }));
   const r = retimeFilm(p.file);
   assert.equal(r.duration, Math.ceil((1.25 + 0.56) * 30) / 30);
   assert.equal(JSON.parse(fs.readFileSync(p.file)).duration, 6);

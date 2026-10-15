@@ -1,3 +1,5 @@
+import { acquireOutputLock } from "./output-lock.mjs";
+import { createProgress } from "./progress.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -119,6 +121,7 @@ Options for still/render:
   --allow-custom-html Render "html" scenes (custom code; only for briefs you trust)
   --allow-code       Render authored film code (only projects you wrote or trust)
   --no-normalize     Keep original audio levels (default: two-pass -14 LUFS / -1 dBTP)
+  --progress <mode>   Phase/frame progress on stderr: text, json or none (default none)
   --gate              render: fail on a flagged narration line or text running off the frame
                       (reading-time and contrast notes stay warnings)
   --no-asr            render: skip the narration transcription check (--asr-model small|medium|large-v3)
@@ -176,6 +179,8 @@ export async function main(argv) {
   };
   if (!Object.hasOwn(commands, cmd))
     return fail(`unknown command "${cmd}". Run motion-use --help`);
+  if (rest.slice(0, rest.indexOf("--") < 0 ? rest.length : rest.indexOf("--")).some((x) => x === "--help" || x === "-h"))
+    return (console.log(`motion-use ${cmd} — see command and options below\n\n${HELP}`), 0);
   let args;
   try {
     args = parseArgs({
@@ -197,6 +202,7 @@ export async function main(argv) {
         out: { type: "string" },
         at: { type: "string" },
         quality: { type: "string" },
+        progress: { type: "string" },
         engine: { type: "string" },
         "max-size": { type: "string" },
         target: { type: "string" },
@@ -247,12 +253,29 @@ export async function main(argv) {
     return fail("--workers takes a whole number from 1 to 32", args.values.json);
   if (args.values.renderer !== undefined && !["auto", "native", "chrome"].includes(args.values.renderer))
     return fail("--renderer must be auto, native or chrome", args.values.json);
+  if (args.values.progress !== undefined && !["text", "json", "none"].includes(args.values.progress))
+    return fail("--progress must be text, json or none", args.values.json);
   if (cmd !== "upgrade") await maybeNotify(VERSION);
+  let unlock;
+  const progress = createProgress(args.values.progress);
+  args.values._progress = progress;
   try {
-    return await commands[cmd](args.values, args.positionals);
+    if (["render", "still"].includes(cmd)) {
+      const project = resolveProject(args.positionals[0]);
+      if (isFilm(project) && !args.values["allow-code"])
+        return fail("this film executes authored drawing code; pass --allow-code only for a project you wrote or trust", args.values.json);
+      unlock = acquireOutputLock(path.resolve(args.values.out ?? path.join(path.dirname(project), "out")));
+    }
+    progress("command", "start");
+    const code = await commands[cmd](args.values, args.positionals);
+    progress("command", code ? "error" : "finish");
+    return code;
   } catch (e) {
+    progress("command", "error");
     if (e instanceof BriefError) return fail(e.message, args.values.json);
     return fail(e.message, args.values.json);
+  } finally {
+    unlock?.();
   }
 }
 
@@ -503,7 +526,9 @@ async function validate(o, [briefPath]) {
 }
 
 async function each(briefPath, o, fn) {
+  o._progress?.("validate", "start");
   const c = check(briefPath, o);
+  o._progress?.("validate", c.ok ? "finish" : "error");
   if (!c.film && (o["no-captions"] || o["no-bgm"]))
     return { code: fail("--no-captions/--no-bgm require an authored film", o.json) };
   if (!c.ok) {
@@ -547,8 +572,9 @@ async function each(briefPath, o, fn) {
   for (const l of c.langs)
     for (const f of c.formats) {
       const id = `${c.brief.name}-${l}-${f}${o["no-captions"] ? "-no-captions" : ""}${o["no-bgm"] ? "-no-bgm" : ""}`;
+      o._progress?.("build", "start", { lang: l, format: f });
       const proj = c.film
-        ? await buildFilm(c.film, l, f, path.join(out, ".build", id), { range: o.range, guides: Boolean(o.guides) && !o._render, noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) })
+        ? await buildFilm(c.film, l, f, path.join(out, ".build", id), { range: o.range, guides: Boolean(o.guides) && !o._render, noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), progress: o._progress })
         : await buildProject(c.brief, l, f, path.join(out, ".build", id));
       if (!c.film) {
         proj.narrationTracks = proj.scenes
@@ -573,6 +599,7 @@ async function each(briefPath, o, fn) {
             proj.narrationStem,
           );
       }
+      o._progress?.("build", "finish", { lang: l, format: f });
       results.push(await fn(proj, id, out, c.brief));
     }
   return {
@@ -682,12 +709,14 @@ async function render(o, [briefPath]) {
       else printReport(c.report);
       return 1;
     }
+    o._progress?.("narration", "start");
     const generated = o.range ? { rows: [] } : await generateFilmNarration(c.film, {
       langs: c.langs,
       engine: o.engine,
       wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
     });
+    o._progress?.("narration", "finish");
     const failed = generated.rows.filter((r) => r.status === "error");
     if (failed.length)
       return fail(
@@ -763,7 +792,9 @@ async function render(o, [briefPath]) {
   // Narration check: what speech recognition hears against each script line.
   let narrationCheck = null;
   if (!o.range && !o["no-asr"]) {
+    o._progress?.("narration_check", "start");
     narrationCheck = runNarrationCheck(briefPath, o);
+    o._progress?.("narration_check", "finish");
     const quiet = narrationCheck.skipped && !narrationCheck.lines.length && narrationCheck.skipped.startsWith("no generated");
     if (!o.json && !quiet) for (const line of describeNarration(narrationCheck)) console.error(`warning: ${line}`);
     if (o.gate && !narrationCheck.skipped && !narrationCheck.ok)
@@ -842,7 +873,9 @@ async function render(o, [briefPath]) {
       // Text check before capture: measured boxes of every drawn string against the frame.
       let textCheck = null;
       if (proj.film && !o["no-text-check"]) {
+        o._progress?.("text_check", "start", { lang: proj.lang, format: proj.format });
         textCheck = await filmTextCheck(proj, brief, o);
+        o._progress?.("text_check", "finish");
         if (!o.json) for (const line of describeText(textCheck)) console.error(`warning: ${id}: ${line}`);
         const off = textCheck.runs?.filter((x) => x.kind === "frame" || x.kind === "collision") ?? [];
         if (o.gate && off.length)
@@ -852,6 +885,7 @@ async function render(o, [briefPath]) {
       fs.rmSync(tmp, { force: true });
       if (!o.json)
         console.error(`rendering ${id} (${proj.total.toFixed(1)}s${proj.film ? `, ${usedRenderer(brief, o)} renderer` : ""})…`);
+      o._progress?.("capture_encode", "start", { lang: proj.lang, format: proj.format });
       let hf = null;
       if (proj.film && !brief.engine && pickRenderer(brief, o).renderer === "native") {
         hf = await nativeRender(proj, tmp, { ...o, quality, crf: o.release ? 10 : undefined }, o._picked);
@@ -877,6 +911,7 @@ async function render(o, [briefPath]) {
             ].filter(Boolean),
             {},
           );
+      o._progress?.("capture_encode", hf.code ? "error" : "finish");
       const ok =
         hf.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0;
       if (!ok)
@@ -885,19 +920,23 @@ async function render(o, [briefPath]) {
           id,
           error: hf.out.trim().split("\n").slice(-15).join("\n"),
         };
+      o._progress?.("normalize", "start");
       let normalization = { applied: false, reason: "disabled" };
       if (!o["no-normalize"]) {
         const norm = path.join(proj.dir, "normalized.mp4");
         normalization = normalizeAudio(tmp, norm);
         if (normalization.applied) fs.renameSync(norm, tmp);
       }
+      o._progress?.("normalize", "finish");
       let fitted = null;
       if (maxBytes && fs.statSync(tmp).size > maxBytes) {
         fitted = fitSize(tmp, maxBytes, proj.dir);
         if (!fitted.ok) return { ok: false, id, error: fitted.error };
       }
       const bytes = fs.statSync(tmp).size;
+      o._progress?.("verification", "start");
       const verification = verifyVideo(tmp, path.join(out, "review", id), {
+        progress: o._progress,
         expected: {
           duration: proj.total,
           fps: proj.fps,
@@ -928,6 +967,7 @@ async function render(o, [briefPath]) {
             o["allow-blue-purple"] ?? brief.look?.allowBluePurple ?? null,
         },
       });
+      o._progress?.("verification", verification.ok ? "finish" : "error");
       if (!verification.ok && q !== "draft")
         return {
           ok: false,
@@ -996,8 +1036,10 @@ async function render(o, [briefPath]) {
       // Release: platform masters encoded from the near-lossless render, each hashed.
       let release = null;
       if (o.release) {
+        o._progress?.("release_encode", "start");
         try {
           release = makeRelease({ out, proj, id, file, cover, seconds: verification.observed.seconds, force: o.force, renderer: verification.renderer, log: o.json ? () => {} : (m) => console.error(m) });
+          o._progress?.("release_encode", "finish");
         } catch (e) {
           return { ok: false, id, file, error: `release masters: ${e.message}` };
         }
@@ -1108,7 +1150,9 @@ function makeRelease({ out, proj, id, file, cover, seconds, force, renderer, log
       blocked = guardOutput(out, final, force);
     if (blocked) throw new Error(blocked);
     const tmp = path.join(proj.dir, `release-${name}`);
+    log(`release file start: ${name}`);
     make(tmp);
+    log(`release file finish: ${name}`);
     commitOutput(out, tmp, final);
     entries.push(releaseEntry(relDir, name, { ...extra, ...meta }));
     return entries.at(-1);
@@ -1189,7 +1233,7 @@ async function nativeRender(proj, file, o, pick) {
       return { code: 1, out: e.message };
     }
   }
-  return streamRender({ bin: pick.bin, proj, file, audio, quality: o.quality, crf: o.crf, workers: nativeWorkers(o) });
+  return streamRender({ onProgress: (frames, total) => o._progress?.("capture_encode", "progress", { frames, total }), bin: pick.bin, proj, file, audio, quality: o.quality, crf: o.crf, workers: nativeWorkers(o) });
 }
 
 /** The cut's mix as a WAV for an engine film (none for a silent preview). */
@@ -1440,13 +1484,13 @@ async function voiceover(o, [briefPath, ...rest]) {
             ok,
             engine: res.engine,
             files: res.rows.map((row) => {
-              const track = post.film.tracks.find((a) => a.id === row.scene && a.lang === row.lang && a.role === "voiceover");
+              const track = row.status !== "error" && post.film.tracks.find((a) => a.id === row.scene && a.lang === row.lang && a.role === "voiceover");
               const window = post.film.narrationPlans.find((p) => p.id === row.scene);
               return { ...row, ...(track ? { file: track.file, format: path.extname(track.file).slice(1), seconds: track.length,
                 window: window ? { start: window.start, end: window.end } : null,
                 fits: window ? track.length <= window.end - window.start + 0.02 : null } : {}) };
             }),
-            errors: post.report.errors,
+            errors: [...post.report.errors, ...res.rows.filter((r) => r.status === "error").map((r) => ({ path: `$.voiceover.${r.lang}.${r.scene}`, message: r.error }))],
           },
           null,
           2,
@@ -1490,7 +1534,7 @@ async function voiceover(o, [briefPath, ...rest]) {
   if (o.json)
     console.log(
       JSON.stringify(
-        { ok: failed.length === 0, engine: res.engine, files: res.rows },
+        { ok: failed.length === 0, engine: res.engine, files: res.rows, errors: failed.map((r) => ({ scene: r.scene, lang: r.lang, message: r.error })) },
         null,
         2,
       ),

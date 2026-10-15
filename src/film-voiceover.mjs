@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { validateBrief } from "./brief.mjs";
 import { audioSeconds } from "./build.mjs";
-import { generateVoiceover } from "./voiceover.mjs";
+import { generateVoiceover, narrationFreshness } from "./voiceover.mjs";
 
 const contained = (base, file) => {
   const r = path.relative(base, file);
@@ -141,6 +141,11 @@ export function resolveNarration(
         continue;
       }
       try {
+        const freshness = narrationFreshness(dir, file, p.narration[l], config, l);
+        if (!freshness.imported && !freshness.current) {
+          error(`$.voiceover.${l}.${p.id}`, "stale narration: script, settings or audio hash changed; regenerate voiceover");
+          continue;
+        }
         const length = probe(file);
         if (length > p.end - p.start + 0.02)
           error(
