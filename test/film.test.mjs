@@ -9,6 +9,8 @@ import {
   checkFilm,
   buildFilm,
   resolveProject,
+  coverArgs,
+  coverWarning,
 } from "../src/film.mjs";
 import { main } from "../src/cli.mjs";
 import {
@@ -19,6 +21,7 @@ import {
 } from "../src/verify.mjs";
 import { execFileSync } from "node:child_process";
 import vm from "node:vm";
+import { isBlankFrame } from "../src/motion-check.mjs";
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "mu-film-test-"));
 const project = () => {
@@ -28,6 +31,43 @@ const project = () => {
   const data=JSON.parse(fs.readFileSync(file,"utf8")); data.voiceover=false; fs.writeFileSync(file,JSON.stringify(data));
   return { dir, file, data };
 };
+test("film cover time is validated and used in output seek arguments", () => {
+  const { dir, data } = project();
+  for (const at of [0, 6.6, data.duration - 0.001]) {
+    const checked = validateFilm({ ...data, cover: { at } }, dir);
+    assert.deepEqual(checked.errors, []);
+    const args = coverArgs("film.mp4", "cover.png", checked.film);
+    assert.equal(args[args.indexOf("-ss") + 1], String(Math.floor(at * data.fps) / data.fps));
+    assert.ok(args.indexOf("-ss") > args.indexOf("-i"));
+    assert.equal(args.at(-1), "cover.png");
+  }
+  for (const cover of [null, [], "first-scene", {}, { at: -1 }, { at: data.duration }, { at: Infinity }, { at: NaN }, { at: "6.6" }])
+    assert.ok(validateFilm({ ...data, cover }, dir).errors.some((e) => e.path === "$.cover.at"));
+  assert.equal(coverArgs("film.mp4", "cover.png", data)[6], "0");
+});
+
+test("cover blank detection reuses Sobel thresholds and only warns for automatic film covers", () => {
+  const w = 320, h = 180, frame = new Uint8Array(w * h);
+  for (const gray of [0, 128, 255]) {
+    frame.fill(gray);
+    assert.equal(isBlankFrame(frame, w, h), true);
+    assert.match(coverWarning({ kind: "film" }, frame, w, h), /set cover.at/);
+    assert.equal(coverWarning({ kind: "film", cover: { at: 0 } }, frame, w, h), null);
+    assert.equal(coverWarning({}, frame, w, h), null);
+  }
+  frame.fill(0);
+  frame[w * 90 + 160] = 255;
+  assert.equal(isBlankFrame(frame, w, h), true);
+  // A vertical step has Sobel magnitude 4 * contrast; 24 itself is excluded.
+  for (const contrast of [6, 7]) {
+    for (let y = 0; y < h; y++) frame.fill(contrast, y * w + w / 2, (y + 1) * w);
+    assert.equal(isBlankFrame(frame, w, h), contrast === 6);
+    frame.fill(0);
+  }
+  for (let y = 40; y < 140; y++) frame.fill(255, y * w + 60, y * w + 260);
+  assert.equal(isBlankFrame(frame, w, h), false);
+  assert.equal(coverWarning({ kind: "film" }, frame, w, h), null);
+});
 test("default init creates an authored film and never replaces its code on re-init", async () => {
   const { dir, file } = project();
   fs.writeFileSync(

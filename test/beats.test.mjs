@@ -6,11 +6,72 @@ import vm from "node:vm";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
 import { synthMusic } from "../src/music.mjs";
-import { analyzeBeats, decodeMono, peakTime } from "../src/beats.mjs";
+import { analyzeBeats, decodeMono, peakTime, alignDrop } from "../src/beats.mjs";
 import { initFilm, validateFilm } from "../src/film.mjs";
 import { measureLoopSeam } from "../src/verify.mjs";
+import { main } from "../src/cli.mjs";
 
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "mu-beats-"));
+
+test("drop alignment lists film bars, rejects early or missing drops and caps the grid", () => {
+  const dir = temp(), file = path.join(dir, "song.wav");
+  fs.writeFileSync(file, synthMusic("promo", 30, { bpm: 80 }));
+  const song = analyzeBeats(decodeMono(file));
+  const aligned = alignDrop(song, 5.5);
+  assert.equal(aligned.from, Math.round((song.drop.start - 5.5) * 1000) / 1000);
+  assert.ok(aligned.film_bars.includes(5.5));
+  assert.ok(aligned.film_bars.every((t) => t >= 0 && t < song.seconds - aligned.from));
+  assert.ok(aligned.film_bars.at(-1) >= song.bars.at(-1).start - aligned.from);
+  assert.equal(alignDrop(song, song.drop.start).from, 0);
+  assert.throws(() => alignDrop(song, song.drop.start + 0.001), /too early.*at most/);
+  const silence = analyzeBeats(new Float32Array(22050 * 8));
+  assert.throws(() => alignDrop(silence, 0), /no drop detected/);
+  for (const invalid of [-1, NaN, Infinity]) assert.throws(() => alignDrop(song, invalid), /finite, non-negative/);
+  const long = { ...song, seconds: 1000, bars: Array.from({ length: 400 }, (_, i) => ({ start: i * 2 })) };
+  assert.equal(alignDrop(long, song.drop.start).film_bars.length, 64);
+});
+
+test("beats CLI reports drop-aligned music and bar lines in human and JSON output", async () => {
+  const dir = temp(), file = path.join(dir, "song.wav");
+  fs.writeFileSync(file, synthMusic("promo", 20, { bpm: 80 }));
+  const savedLog = console.log, savedError = console.error;
+  const savedUpdate = process.env.MOTION_USE_NO_UPDATE_CHECK;
+  process.env.MOTION_USE_NO_UPDATE_CHECK = "1";
+  let output = "", errors = "";
+  console.log = (s) => { output += s; };
+  console.error = (s) => { errors += s; };
+  try {
+    assert.equal(await main(["beats", file, "--drop-at", "5.5", "--json"]), 0);
+    const json = JSON.parse(output);
+    assert.equal(json.music.from, Math.round((json.drop.start - 5.5) * 1000) / 1000);
+    assert.ok(json.film_bars.includes(5.5));
+    output = "";
+    assert.equal(await main(["beats", file, "--drop-at", "5.5"]), 0);
+    assert.ok(output.includes(`"music": ${JSON.stringify(json.music)}`));
+    assert.ok(output.includes(`bar lines (film seconds): ${json.film_bars.join(" ")}`));
+    const padded = path.join(dir, "padded.wav");
+    execFileSync("ffmpeg", ["-v", "error", "-i", file, "-af", "adelay=3000:all=1", padded]);
+    output = "";
+    assert.equal(await main(["beats", padded, "--from", "1", "--to", "22", "--drop-at", "5.5", "--json"]), 0);
+    const range = JSON.parse(output);
+    assert.equal(range.music.from, Math.round((range.drop.start - 5.5) * 1000) / 1000);
+    assert.ok(range.film_bars.includes(5.5));
+    assert.ok(range.film_bars.every((t) => t < 22 - range.music.from));
+    output = "";
+    assert.equal(await main(["beats", file, "--drop-at", "100", "--json"]), 1);
+    assert.match(JSON.parse(output).error, /too early.*at most/);
+    fs.writeFileSync(file, synthMusic("ambient", 8, {}));
+    output = "";
+    assert.equal(await main(["beats", file, "--drop-at", "0", "--json"]), 1);
+    assert.match(JSON.parse(output).error, /no drop detected/);
+    assert.equal(errors, "");
+  } finally {
+    console.log = savedLog;
+    console.error = savedError;
+    if (savedUpdate === undefined) delete process.env.MOTION_USE_NO_UPDATE_CHECK;
+    else process.env.MOTION_USE_NO_UPDATE_CHECK = savedUpdate;
+  }
+});
 
 test("beats finds tempo, the first downbeat and the drop of a song with a known grid", () => {
   const dir = temp();

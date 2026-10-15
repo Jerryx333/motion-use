@@ -38,6 +38,13 @@ Explainer style. State the one task the viewer will see completed, show the part
 
 Narration: one idea per scene; say why as well as what.
 
+## Conversational Chinese product promos
+
+For product films on Chinese short-video platforms: pain-point line → pivot on the song drop → 2–3 sourced numbers, each in its own shot → an honest explanation of how it works → "I made this" (only when true) / closing card.
+Add slang only to the tone (e.g. 烧心、规矩立住了、稳了、心里有底、一条龙、格局打开), at most one phrase per sentence; do not change a single word of the facts or add unverifiable numbers or absolute claims.
+Place the pain point in the restrained, sparse beats before the drop; use `beats --drop-at` to align the pivot.
+Every narration sentence must fit its shot window and finish at least 0.5 s before the window ends, leaving time for the on-screen impact words.
+
 ## Rules for every story
 
 - Facts come from the product's README, `--help` and real output. Never invent features, numbers or install lines.

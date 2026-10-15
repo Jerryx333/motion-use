@@ -64,6 +64,11 @@ function edgeShare(f, w, h) {
   return e / ((w - 2) * (h - 2));
 }
 
+/** A grayscale frame with fewer than 0.2% strong Sobel edges is nearly empty. */
+export function isBlankFrame(frame, width, height) {
+  return edgeShare(frame, width, height) < BLANK_FRAC;
+}
+
 // Whole-frame cross-dissolves: the endpoints differ, every middle frame is a linear blend of them.
 function dissolves(frame, d, cutLike, n, len) {
   const found = [];
@@ -319,7 +324,7 @@ export function measureMotion(file, { cuts = [] } = {}) {
   const blankRuns = [];
   let b0 = null;
   for (let i = 0; i <= n; i++) {
-    const blank = i < n && blankOk[i] && edgeShare(frame(i), WIDTH, hc) < BLANK_FRAC;
+    const blank = i < n && blankOk[i] && isBlankFrame(frame(i), WIDTH, hc);
     if (blank && b0 === null) b0 = i;
     if (!blank && b0 !== null) {
       if ((i - b0) / FPS >= BLANK_MIN_S - 1e-9) blankRuns.push({ start: round(b0 / FPS, 2), end: round(i / FPS, 2) });

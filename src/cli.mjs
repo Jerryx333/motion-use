@@ -36,12 +36,14 @@ import {
   initFilm,
   isFilm,
   resolveProject,
+  coverArgs,
+  coverWarning,
 } from "./film.mjs";
 import { normalizeAudio, verifyVideo, buildNarrationStem } from "./verify.mjs";
 import { generateFilmNarration } from "./film-voiceover.mjs";
 import { breakdownVideo } from "./breakdown.mjs";
 import { fetchReference } from "./reference.mjs";
-import { analyzeBeats, decodeMono } from "./beats.mjs";
+import { analyzeBeats, decodeMono, alignDrop } from "./beats.mjs";
 import { compareVideos } from "./compare.mjs";
 import { measureMotion, gradeMotion } from "./motion-check.mjs";
 import { checkNarration, describeNarration, narrationItems } from "./narration-check.mjs";
@@ -85,6 +87,7 @@ Usage: motion-use <command> [options]
                       the prompt belongs to its creator: paraphrase, never paste) (--no-video, --out <dir>)
   beats <audio>      Find a song's tempo, first downbeat, bar loudness and drop; prints the film.json
                       music line that puts film second 0 on a downbeat (--from/--to: analyse a range)
+                      --drop-at <seconds> aligns the drop to film time and lists film bar lines (up to 64)
   compare <a> <b>     Put frames of two videos side by side (--times 1.5,4 --out compare.png)
   doctor              Check Node, ffmpeg, Chrome and the bundled engine (--install-browser fetches Chrome)
   upgrade             Update motion-use and its skill (--check only looks)
@@ -187,6 +190,7 @@ export async function main(argv) {
         guides: { type: "boolean" },
         from: { type: "string" },
         to: { type: "string" },
+        "drop-at": { type: "string" },
         gpu: { type: "boolean" },
         loop: { type: "boolean" },
         beats: { type: "string" },
@@ -925,7 +929,7 @@ async function render(o, [briefPath]) {
         console.log(
           `${file}  ${mb(bytes)}${fitted ? ` (re-encoded at CRF ${fitted.crf} to fit)` : ""}`,
         );
-      // Frame 0 as a PNG: the cover to upload where a platform asks for one.
+      // The selected film frame as a PNG, also copied into release masters.
       const coverFile = path.join(out, `${id}-cover.png`);
       let cover = null;
       if (!guardOutput(out, coverFile, o.force)) {
@@ -933,7 +937,7 @@ async function render(o, [briefPath]) {
         try {
           execFileSync(
             "ffmpeg",
-            ["-v", "error", "-y", "-i", file, "-frames:v", "1", tmpCover],
+            coverArgs(file, tmpCover, proj.film ? brief : null),
             { stdio: ["ignore", "ignore", "pipe"] },
           );
           commitOutput(out, tmpCover, coverFile);
@@ -947,6 +951,19 @@ async function render(o, [briefPath]) {
         console.error(
           `motion-use: cover image skipped: ${guardOutput(out, coverFile, o.force)}`,
         );
+      if (cover && proj.film && brief.cover?.at === undefined) {
+        try {
+          const gray = execFileSync("ffmpeg", ["-v", "error", "-i", cover, "-vf", "scale=320:-1:flags=area", "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "-"], { stdio: ["ignore", "pipe", "pipe"] });
+          const warning = coverWarning(brief, gray, 320, gray.length / 320);
+          if (warning) {
+            verification.warnings.push(warning);
+            console.error(`warning: ${warning}`);
+            fs.writeFileSync(verification.report, JSON.stringify(verification, null, 2) + "\n");
+          }
+        } catch (e) {
+          console.error(`motion-use: cover content check skipped (${e.message})`);
+        }
+      }
       // Release: platform masters encoded from the near-lossless render, each hashed.
       let release = null;
       if (o.release) {
@@ -1810,6 +1827,9 @@ async function beats(o, [file]) {
     to = o.to === undefined ? undefined : Number(o.to);
   if (!Number.isFinite(from) || from < 0 || (to !== undefined && !(to > from)))
     return fail("--from/--to take seconds into the song, with --to after --from", o.json);
+  const dropAt = o["drop-at"] === undefined ? undefined : Number(o["drop-at"]);
+  if (dropAt !== undefined && (!Number.isFinite(dropAt) || dropAt < 0))
+    return fail("--drop-at takes a finite, non-negative film second", o.json);
   const r = analyzeBeats(decodeMono(input, { from, length: to === undefined ? undefined : to - from }));
   // Report song time, not range time.
   const sh = (x) => Math.round((x + from) * 1000) / 1000;
@@ -1824,7 +1844,9 @@ async function beats(o, [file]) {
   const warnings = [];
   if (res.confidence < 2) warnings.push("no clear beat: the grid is a guess; confirm it by ear before cutting to it");
   if (res.downbeat_confidence < 1.2) warnings.push("the bar start is a guess: no beat carries clearly more kick; check which beat is one");
-  const music = { file, bpm: res.bpm, from: res.downbeat };
+  const alignment = dropAt === undefined ? null : alignDrop({ ...res, seconds: sh(r.seconds) }, dropAt);
+  const music = { file, bpm: res.bpm, from: alignment?.from ?? res.downbeat };
+  if (alignment) res.film_bars = alignment.film_bars;
   if (o.json) {
     const { beats: grid, ...rest } = res;
     console.log(JSON.stringify({ ok: true, ...rest, ...(o.verbose ? { beats: grid } : {}), music, warnings }, null, 2));
@@ -1833,12 +1855,14 @@ async function beats(o, [file]) {
       [
         `${res.bpm} BPM (beat ${res.beat_seconds}s, confidence ${res.confidence}); first beat ${res.first_beat}s, first downbeat ${res.downbeat}s (4/4 assumed, confidence ${res.downbeat_confidence})`,
         res.drop
-          ? `drop: bar ${res.drop.bar} at ${res.drop.start}s in the song, +${res.drop.lift_db} dB over the bars before (film second ${Math.round((res.drop.start - res.downbeat) * 1000) / 1000} with the line below)`
+          ? `drop: bar ${res.drop.bar} at ${res.drop.start}s in the song, +${res.drop.lift_db} dB over the bars before (film second ${Math.round((res.drop.start - music.from) * 1000) / 1000} with the line below)`
           : "no drop: no bar rises 3 dB over the four before it",
         `bars (dB): ${res.bars.slice(0, 32).map((b) => b.db).join(" ")}${res.bars.length > 32 ? " …" : ""}`,
         "",
         `"music": ${JSON.stringify(music)}`,
-        "film second 0 then sits on a downbeat, so M.beat(t) counts the song's beats and `still --beats 1` shows every hit.",
+        ...(alignment
+          ? [`bar lines (film seconds): ${alignment.film_bars.join(" ")}`]
+          : ["film second 0 then sits on a downbeat, so M.beat(t) counts the song's beats and `still --beats 1` shows every hit."]),
         ...warnings.map((w) => `warning: ${w}`),
       ].join("\n"),
     );

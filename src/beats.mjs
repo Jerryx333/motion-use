@@ -8,6 +8,21 @@ const FRAME = 1024;
 const HOP = 256;
 const r3 = (x) => Math.round(x * 1000) / 1000;
 
+/** Align a detected drop and the 4/4 bar grid to film time. Analysis uses song seconds. */
+export function alignDrop(analysis, dropAt) {
+  if (!Number.isFinite(dropAt) || dropAt < 0) throw new Error("--drop-at takes a finite, non-negative film second");
+  if (!analysis.drop) throw new Error("cannot align --drop-at: no drop detected in the song");
+  const offset = analysis.drop.start - dropAt;
+  if (offset < 0) throw new Error(`the song's drop is too early: it can land at film second ${analysis.drop.start} at most`);
+  const from = r3(offset), bar = 240 / analysis.bpm;
+  const starts = analysis.bars.map((b) => b.start);
+  // Loudness bars contain only complete bars; include the final partial bar line too.
+  const tail = r3(starts.at(-1) + bar);
+  if (tail < analysis.seconds) starts.push(tail);
+  const film_bars = starts.filter((t) => t >= from && t < analysis.seconds).slice(0, 64).map((t) => r3(t - from));
+  return { from, film_bars };
+}
+
 /** Decode an audio (or video) file to mono float samples. */
 export function decodeMono(file, { rate = SR, from = 0, length } = {}) {
   const args = ["-v", "error", ...(from > 0 ? ["-ss", String(from)] : []), "-i", file];

@@ -15,6 +15,7 @@ import { buildNarrationStem } from "./verify.mjs";
 import { readVoManifest, estimateCues } from "./voiceover.mjs";
 import { readingSeconds, READING_RULE } from "./text-probe.mjs";
 import crypto from "node:crypto";
+import { isBlankFrame } from "./motion-check.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const FILM_FORMATS = { ...FORMATS, square: [1440, 1440] };
@@ -52,6 +53,20 @@ export function isFilm(file) {
   }
 }
 
+/** Seek in the decoded output timeline so the PNG uses the requested film time. */
+export function coverArgs(file, output, film) {
+  const at = film?.cover?.at ?? 0;
+  // Use the frame containing at, including times after the last frame's timestamp.
+  const frameAt = film?.fps ? Math.floor(at * film.fps) / film.fps : at;
+  return ["-v", "error", "-y", "-i", file, "-ss", String(frameAt), "-frames:v", "1", output];
+}
+
+export function coverWarning(film, frame, width, height) {
+  return film?.kind === "film" && film.cover?.at === undefined && isBlankFrame(frame, width, height)
+    ? "cover frame has almost no content; set cover.at in film.json to a frame with visible content"
+    : null;
+}
+
 export function validateFilm(
   data,
   dir,
@@ -80,6 +95,10 @@ export function validateFilm(
       "$.duration",
       "seconds, 1–180; authored timing is never silently stretched",
     );
+  if (data.cover !== undefined &&
+    (!data.cover || typeof data.cover !== "object" || Array.isArray(data.cover) ||
+      !Number.isFinite(data.cover.at) || data.cover.at < 0 || !(data.cover.at < data.duration)))
+    error("$.cover.at", "seconds, 0 <= at < duration");
   if (data.brief !== undefined) {
     const b = data.brief;
     if (!b || typeof b !== "object" || Array.isArray(b))
