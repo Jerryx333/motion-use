@@ -449,7 +449,7 @@ export function verifyVideo(
   progress("motion_analysis", "start");
   let motion = null;
   try {
-    const measured = measureMotion(file, { cuts: motionCheck.cuts ?? [] });
+    const measured = measureMotion(file, { cuts: motionCheck.cuts ?? [], shots });
     const graded = gradeMotion(measured, motionCheck);
     motion = {
       level: graded.level,
