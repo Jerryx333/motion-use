@@ -7,6 +7,7 @@ import { claimDir, audioSeconds, mediaInfo } from "./build.mjs";
 import { execFileSync } from "node:child_process";
 import { writeSubsets, missingGlyphs } from "./fonts.mjs";
 import { writeMusic, MOOD_NAMES, moodBpm } from "./music.mjs";
+import { composeMusic } from "./compose.mjs";
 import { peakTime } from "./beats.mjs";
 import { esc } from "./html.mjs";
 import { BriefError } from "./brief.mjs";
@@ -333,14 +334,28 @@ export function validateFilm(
     warnings.push({ path: p, message }),
   );
   const music = data.music ?? "none";
-  let musicFile = null;
+  let musicFile = null,
+    scoreFile = null;
+  // Every film gets music written for it (composition/score.js). A built-in bed is the same
+  // sound in every film of that mood, so it has to say why it is enough here.
+  const sameBed =
+    "a built-in mood is the same bed in every film that uses it: write composition/score.js for this film (music: {score}), or record why the bed is right here in music.why";
+  if (music === "builtin") warnings.push({ path: "$.music", message: sameBed });
+  if (typeof music === "object" && music && music.why !== undefined) text(music.why, "$.music.why");
   if (!["builtin", "none"].includes(music)) {
     if (!music || typeof music !== "object" || Array.isArray(music))
       error(
         "$.music",
-        '"builtin", "none", {builtin: mood, volume, hits} or {file, volume, bpm, from}',
+        '"none", {score: "composition/score.js", volume}, {file, volume, bpm, from} or {builtin: mood, why, volume, hits}',
       );
-    else if (music.builtin !== undefined) {
+    else if (music.score !== undefined) {
+      if (music.builtin !== undefined || music.file !== undefined)
+        error("$.music", "choose a score, a file or a built-in mood, not two");
+      scoreFile = local(music.score, "$.music.score");
+      if (music.volume !== undefined && !finite(music.volume, 0, 1))
+        error("$.music.volume", "0–1");
+    } else if (music.builtin !== undefined) {
+      if (!music.why) warnings.push({ path: "$.music.builtin", message: sameBed });
       if (music.file !== undefined)
         error("$.music", "choose a built-in mood or a file, not both");
       if (!MOOD_NAMES.includes(music.builtin))
@@ -553,6 +568,7 @@ export function validateFilm(
       composition,
       source,
       musicFile,
+      scoreFile,
       bpm,
       tracks,
       fileAssets,
@@ -809,6 +825,7 @@ export function initFilm(o, dir) {
   fs.mkdirSync(path.dirname(draw), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(data, null, 2) + "\n");
   fs.copyFileSync(path.join(ROOT, "templates", "film", "draw.js"), draw);
+  fs.copyFileSync(path.join(ROOT, "templates", "film", "score.js"), path.join(path.dirname(draw), "score.js"));
   fs.copyFileSync(
     path.join(ROOT, "templates", "film", "DIRECTOR.md"),
     director,
@@ -931,7 +948,15 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     selectedTracks = range ? [] : film.tracks.filter((a) => (!a.lang || a.lang === lang) && !(noBgm && a.role === "music"));
   if (!range && !noBgm && film.music !== "none" && film.music !== undefined) {
     let rel = "assets/audio/music.wav";
-    if (film.music === "builtin" || film.music.builtin)
+    if (film.scoreFile) {
+      const voice = selectedTracks
+        .filter((a) => a.role === "voiceover")
+        .map((a) => ({ start: a.start, end: a.start + a.length }));
+      const { wav, score, problems } = composeMusic(film, lang, voice);
+      fs.writeFileSync(path.join(outDir, rel), wav);
+      fs.writeFileSync(path.join(outDir, "assets", "audio", "score.json"), JSON.stringify({ why: score.why, tempo: score.tempo, key: score.key, instruments: [...new Set(score.events.map((e) => e.instrument))].sort(), notes: score.events.length, warnings: problems.map((p) => p.message) }, null, 2));
+      for (const p of problems) console.error(`warning: music score: ${p.message}`);
+    } else if (film.music === "builtin" || film.music.builtin)
       writeMusic(
         path.join(outDir, rel),
         film.music.builtin ?? "promo",

@@ -19,14 +19,8 @@
     "character": "none"
   },
   "music": {
-    "builtin": "chiptune",
-    "volume": 0.45,
-    "hits": [
-      0.4,
-      3.0,
-      5.6,
-      10.9
-    ]
+    "score": "composition/score.js",
+    "volume": 0.45
   },
   "copy": {
     "en": {

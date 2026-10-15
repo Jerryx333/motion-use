@@ -9,7 +9,7 @@
   "languages": ["zh", "en"], "formats": ["landscape", "vertical"],
   "composition": "composition/draw.js",
   "look": {"style": "Warm paper, flat shapes, one line weight", "palette": "paper", "character": "none"},
-  "music": {"builtin": "pulse", "hits": [6.1]}, "motionBlur": {"samples": 4, "shutter": 0.5},
+  "music": {"score": "composition/score.js"}, "motionBlur": {"samples": 4, "shutter": 0.5},
   "copy": {"zh": {"headline": "变化发生。"}, "en": {"headline": "A change happens."}},
   "shots": [
     {"id": "action", "start": 0, "end": 6, "camera": "push", "purpose": "Show the cause", "action": "A small dot swells into a message and flies across the gap"},
@@ -148,7 +148,7 @@ Final delivery verifies that the voice-only reference actually appears in the MP
 
 ## Sound and narration
 
-`music` accepts `"none"`, `"builtin"`, `{"builtin":"pulse","volume":0.6,"hits":[4.6,9.2]}` or `{"file":"audio/song.wav","volume":0.6,"bpm":120,"from":1.3}`. Built-in moods: `promo`, `explainer`, `pulse` (plucked strings, soft downbeat), `chiptune`, `pentatonic` (plucked D minor pentatonic) and `ambient`; `hits` adds a thump and a plucked accent at those seconds. Root `bpm` wins over the music's BPM; a built-in mood otherwise sets the tempo. Built-in music uses that same tempo, so `motion.beat(seconds)` lines up with it. For imported music, `motion-use beats song.wav` measures the tempo, the first downbeat, per-bar loudness and the drop (4/4 assumed) and prints `{"file", "bpm", "from"}`: `from` is the song second that plays at film second 0, so starting on the downbeat makes `motion.beat(t)` count the song's beats. `still --beats 1` (or `4` for one per bar) renders a frame on every beat of the grid.
+`music` accepts `{"score":"composition/score.js","volume":0.6}` (the film's own music, written for it: [music.md](music.md)), `{"file":"audio/song.wav","volume":0.6,"bpm":120,"from":1.3}`, `"none"`, or a built-in bed `{"builtin":"pulse","why":"…","volume":0.6,"hits":[4.6,9.2]}`. A built-in bed sounds the same in every film of its mood: without `why` validation warns and `--release` refuses it; an unchanged starter score is refused too. Each release's music is recorded in `~/.local/share/motion-use/music-index.json`, and one that matches an earlier film (same bed, song, or the same instruments, key and tempo) is reported. Built-in moods: `promo`, `explainer`, `pulse` (plucked strings, soft downbeat), `chiptune`, `pentatonic` (plucked D minor pentatonic) and `ambient`; `hits` adds a thump and a plucked accent at those seconds. Root `bpm` wins over the music's BPM; a built-in mood otherwise sets the tempo. Built-in music uses that same tempo, so `motion.beat(seconds)` lines up with it. For imported music, `motion-use beats song.wav` measures the tempo, the first downbeat, per-bar loudness and the drop (4/4 assumed) and prints `{"file", "bpm", "from"}`: `from` is the song second that plays at film second 0, so starting on the downbeat makes `motion.beat(t)` count the song's beats. `still --beats 1` (or `4` for one per bar) renders a frame on every beat of the grid.
 
 ```json
 "audio": [

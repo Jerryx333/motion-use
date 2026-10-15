@@ -20,9 +20,10 @@ Read [references/production.md](references/production.md) for direction selectio
 
 `motion-use catalog styles|shots` lists original cards; `catalog --out <fresh-dir>` creates a browsable, scrubbable gallery. `study <id> <fresh-dir>` creates the same mechanism as a renderable six-second silent film. Read the card's parameters and pitfalls before adapting it. These are illustrative studies, not a substitute for the subject's real material or a finished film.
 
-`motion-use init <dir>` writes `film.json`, `composition/draw.js` and `DIRECTOR.md`. The starter is a study to replace, not a template to re-skin: a film laid out like it is flagged (`demo_similarity`).
+`motion-use init <dir>` writes `film.json`, `composition/draw.js`, `composition/score.js` and `DIRECTOR.md`. The starters are studies to replace, not a template to re-skin: a film laid out like it is flagged (`demo_similarity`).
 
 - Lock `look`: one style sentence, one palette, the character approach (none, hands, footage, generated frames — not code-drawn mascots).
+- Direct the music with the look: which instruments and mode belong to this subject, where it is sparse, where it peaks, which picture events it hits. Every film gets its own `composition/score.js`; a built-in mood is the same bed in every film and `--release` refuses it without `music.why`. [references/music.md](references/music.md).
 - Each shot names an object you could point at, what *it* does, its `camera` move and the ≤ 8 words on screen. Open on a concrete small scene; end on an action on the subject, not a centred card; keep one example through the film.
 - Words go in `copy` per language, numbers and series in `data`, images in `assets`, footage in `videos`. Changing one value then changes one thing.
 - Fill the brief fields first: `motion-use init <dir> --subject … --purpose … --audience … --tone … --palette … --length 30` (or edit `film.json` → `brief`); `validate` lists any field still a TODO.
@@ -41,6 +42,8 @@ Films render with the native renderer (motion-render, installed by install.sh; `
 Narration is required by default: write it per shot (each language), then `motion-use voiceover <dir>`; it must fit its shot window, so shorten the script or retime the shot, never truncate. `M.captions(c, t)` draws subtitles from it. `voiceover:false` only when the user wants a silent film.
 
 `voiceover --json` reports actual clip paths, formats, seconds and window fit. Mark a shot `"duration":"narration","tail":0.4`, generate the voice, then `motion-use retime <dir>` proposes `film.retimed.json` with frame-aligned windows; the original and brief target are preserved. Do this before placing external audio/cues/footage. With Azure, opt into `voiceover --engine azure --word-timing` for measured word boundaries (optional pinned SDK via uv). `M.at('phrase', {shot:'id'})` uses only cache-matched service timestamps; missing/ambiguous timing throws. For imported or manually checked timing, declare `captions.<lang>` and `cues.<lang>` and use `M.cue('slug')`, preserving estimated flags. Never call sentence interpolation measured word timing.
+
+Write the music after `retime`, against the final shot windows: `S.why(…)`, instruments from `motion-use instruments`, a mode, an `S.arc` over the shots, accents at picture events, melody kept out of narration. `motion-use music . --allow-code` renders it alone with notes per shot; listen against the picture. Contract and helpers: [references/music.md](references/music.md).
 
 For geographic explainers, `motion-use geo world --out map.json` projects the bundled illustrative Natural Earth boundaries; `geo china-provinces` uses 34 geoBoundaries ADM1 units from 2019 and requires the output attribution in film credits; pass a local GeoJSON/TopoJSON for your own data. Load the compiled JSON through `files`; `M.map`, `geoPoint`, `route`, `arrow`, `pin` and updating `list` handle generic map motion. Use actual historical geometry for historical boundary claims. Custom `fonts` need a local font and licence file; `captionStyle` configures subtitle plate/size/position. Contract and limits: film.md.
 
