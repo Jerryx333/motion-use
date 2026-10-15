@@ -72,7 +72,24 @@ test("synthesized voices render to the exact length without clipping", () => {
   assert.equal(report.notes, 5);
   let peak = 0;
   for (let i = 44; i < wav.length; i += 2) peak = Math.max(peak, Math.abs(wav.readInt16LE(i)));
-  assert.ok(peak > 20000 && peak <= 32767 * 0.9, `peak ${peak}`);
+  assert.ok(peak > 3000 && peak <= 32767 * 10 ** (-1 / 20) + 1, `peak ${peak}`);
+});
+
+test("one loud hit does not make the rest of the music inaudible", () => {
+  const dir = tmp();
+  const r = runScore(score(dir, `S.why("a quiet bed and one huge hit");
+    S.chord("pad", 0, [50, 57, 62], { dur: 7, vel: 0.3, raw: true });
+    for (let i = 0; i < 6; i++) S.note("bell", 7, 74 + i, { vel: 1.5, raw: true });`), film, instruments);
+  const { wav } = renderScore(r, film.duration, instruments);
+  const rmsDb = (from, to) => {
+    let acc = 0, n = 0;
+    for (let i = 44 + Math.floor(from * 44100) * 4; i < 44 + Math.floor(to * 44100) * 4; i += 2, n++) acc += (wav.readInt16LE(i) / 32768) ** 2;
+    return 10 * Math.log10(acc / n);
+  };
+  assert.ok(rmsDb(2, 6) > -26, `the bed sits at ${rmsDb(2, 6).toFixed(1)} dBFS`);
+  let peak = 0;
+  for (let i = 44; i < wav.length; i += 2) peak = Math.max(peak, Math.abs(wav.readInt16LE(i)));
+  assert.ok(peak <= 32767 * 10 ** (-1 / 20) + 1, "the hit is limited, not clipped");
 });
 
 test("films must choose their music: a built-in bed needs a reason, a score is accepted", () => {

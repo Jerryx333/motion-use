@@ -2165,6 +2165,7 @@ async function instrumentsCmd(o, [action = "list", ...extra]) {
     return fail("instruments [list|install] [--from <tarball>]", o.json);
   if (action === "install") {
     const dest = packDir();
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
     const tmp = fs.mkdtempSync(path.join(path.dirname(dest), ".install-"));
     try {
       let tarball = o.from;

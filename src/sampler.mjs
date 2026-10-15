@@ -241,23 +241,51 @@ export function renderScore(score, seconds, instruments, seed = 1) {
   const room = score.room ?? {};
   const [wl, wr] = reverb(sendL, sendR, room);
   const wet = room.wet ?? 1;
-  let peak = 1e-9;
+  for (let i = 0; i < N; i++) { L[i] += wl[i] * wet; R[i] += wr[i] * wet; }
+  // Level by how loud the music is most of the time, not by its loudest instant: the median
+  // of 400 ms RMS windows that play at all goes to -20 dBFS, then a limiter (instant
+  // attack, 120 ms release) keeps peaks under -1 dBFS. One big hit no longer makes the rest inaudible.
+  const win = Math.floor(0.4 * SR), rms = [];
+  for (let i = 0; i + win <= N; i += win) {
+    let acc = 0;
+    for (let k = i; k < i + win; k++) acc += L[k] * L[k] + R[k] * R[k];
+    rms.push(Math.sqrt(acc / (2 * win)));
+  }
+  const active = rms.filter((r) => r > 1e-3).sort((a, b) => a - b);
+  const body = active.length ? active[Math.floor(active.length / 2)] : 1;
+  const gain = 10 ** (-20 / 20) / Math.max(1e-6, body);
+  const ceiling = 10 ** (-1 / 20), rel = Math.exp(-1 / (0.12 * SR));
+  let env = 0, peak = 0;
   const fi = Math.floor(0.02 * SR), fo = Math.floor(0.05 * SR);
+  // Look ahead 5 ms so the limiter is already down when a hit arrives.
+  const ahead = Math.floor(0.005 * SR);
+  const lvl = new Float32Array(N);
+  for (let i = 0; i < N; i++) lvl[i] = Math.max(Math.abs(L[i]), Math.abs(R[i])) * gain;
+  // Running max over the next `ahead` samples (monotonic deque, one pass).
+  const look = new Float32Array(N), dq = new Int32Array(N);
+  for (let i = N - 1, h = 0, t = 0; i >= 0; i--) {
+    while (t > h && lvl[dq[t - 1]] <= lvl[i]) t--;
+    dq[t++] = i;
+    while (dq[h] > i + ahead) h++;
+    look[i] = lvl[dq[h]];
+  }
+  lvl.set(look);
   for (let i = 0; i < N; i++) {
-    let g = 1;
-    if (i < fi) g = i / fi;
+    env = lvl[i] > env ? lvl[i] : env * rel + lvl[i] * (1 - rel);
+    let g = gain * (env > ceiling ? ceiling / env : 1);
+    if (i < fi) g *= i / fi;
     if (i > N - fo) g *= (N - i) / fo;
-    L[i] = Math.tanh((L[i] + wl[i] * wet) * g);
-    R[i] = Math.tanh((R[i] + wr[i] * wet) * g);
+    L[i] *= g;
+    R[i] *= g;
     peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
   }
-  const norm = 0.89 / peak;
   const pcm = Buffer.alloc(N * 4);
   for (let i = 0; i < N; i++) {
-    pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, L[i] * norm)) * 32767), i * 4);
-    pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, R[i] * norm)) * 32767), i * 4 + 2);
+    pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, L[i])) * 32767), i * 4);
+    pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, R[i])) * 32767), i * 4 + 2);
   }
-  report.peakBeforeNormalize = peak;
+  report.gain = gain;
+  report.peak = peak;
   return { wav: wav(pcm), report };
 }
 

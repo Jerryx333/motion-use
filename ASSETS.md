@@ -20,7 +20,7 @@ motion-use's own code is MIT (see `LICENSE`). Everything else it ships or instal
 
 `assets/demo-signatures.json` holds 12×8 frame descriptors of the starter and OCS example renders (made by `scripts/demo-signatures.mjs` from this repository's own output, MIT), used only to flag films laid out like the demos.
 
-Background music is not a file: `src/music.mjs` synthesizes an original track to the exact length of each video.
+Built-in background beds are not files: `src/music.mjs` synthesizes them to the exact length of each video. A film's own music is written as `composition/score.js` and played by `src/sampler.mjs` (the reverb follows Jezar's public-domain Freeverb design) with the synthesized voices there and the instrument pack below.
 
 ## In rendered projects and videos
 
@@ -37,6 +37,15 @@ Each build folder (`out/.build/…`) contains WOFF2 subsets cut from the fonts a
 | [harfbuzzjs](https://github.com/harfbuzz/harfbuzzjs) 1.6.2 | MIT | Font coverage check |
 
 Their dependencies (82 packages in total) are MIT, Apache-2.0, ISC, BSD, 0BSD, CC0, Python-2.0 or MIT AND Zlib, with one exception, libvips (**LGPL-3.0-or-later**), which sharp (a HyperFrames dependency) brings in one of two forms: `@img/sharp-libvips-<platform>`, a prebuilt dynamically linked binary, or `@img/sharp-wasm32` (Apache-2.0 AND LGPL-3.0-or-later AND MIT), sharp's WebAssembly build with libvips inside, which npm installs on some systems (it did on the GitHub Actions runners). `node scripts/licenses.mjs` prints the full list and fails CI on any license outside the reviewed set.
+
+`motion-use instruments install` downloads the recorded instrument pack, `motion-use-instruments-1.0.0.tar.gz` (sha256 `35730e57c59bf6569af9f3e086376363046d45bdd50652e0cf57855d35f8b2bd`), from this repository's GitHub Release `instruments-v1.0.0` into `~/.local/share/motion-use/instruments/1.0.0/`: 21 instruments, 447 FLAC files trimmed, faded and level-matched from
+
+| Source | Commit | License |
+|---|---|---|
+| [sgossner/VCSL](https://github.com/sgossner/VCSL) (Versilian Community Sample Library) | `c1ea7bcc3c7309650ab0da9d15c9cd1fbc4a4c7e` | CC0-1.0 |
+| [sgossner/VSCO-2-CE](https://github.com/sgossner/VSCO-2-CE) (Versilian Studios Chamber Orchestra 2, Community Edition) | `440300901dfe9275fd84e0b7763af1f8443ae62e` | CC0-1.0 |
+
+The pack's `manifest.json` names the source folder of every instrument; the pack itself is CC0-1.0.
 
 Rendering also uses programs motion-use does not install: **Node.js**, **FFmpeg** and **Chrome** (system Chrome, or Chrome for Testing downloaded by `motion-use doctor --install-browser`), each under its own license.
 
