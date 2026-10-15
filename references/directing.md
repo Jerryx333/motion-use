@@ -153,3 +153,10 @@ Lessons from the iphone-use promo (2026-10), now checked by `render`:
 - **Hand over, do not stack.** symptom: "任何 App，不需要 API" was still fading out when "一步写入 278 字" slammed into the same spot; the opening of a promo shipped to nine platforms with two lines overprinted for 0.08 s → cause: the next stamp started 0.1 s after the previous one's `until`, inside its 0.18 s exit → fix: start the next line after the old one has gone (or move it elsewhere); `text_check` now reports collisions and re-draws every frame where visible text changes → verified by: all four cuts report 2.80–2.87 s, and a footnote showing through a translucent subtitle plate in the Chinese portrait cut.
 - **Publish only release masters.** symptom: a README-sized cut, then a cut from before the last review fix, went to five platforms and had to be re-posted → cause: files copied by hand from `out/` while the film was still changing → fix: `render --release` + `verify --manifest` before each upload.
 - **Keep what you published reproducible.** symptom: the published cut could not be re-rendered at higher quality because its narration had been regenerated in place → fix: every render's inputs are a snapshot; `render --snapshot <id>`.
+
+### Blur on fast camera moves
+
+Two blur samples produce two discrete images during a large pan or zoom, especially on
+text and real UI. Prefer no blur for readable UI, or try 4/8 samples and a smaller shutter;
+inspect the fast transition at full resolution. Validation conservatively warns for every
+2-sample blur because arbitrary drawing code does not expose a reliable camera velocity.

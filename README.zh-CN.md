@@ -166,3 +166,10 @@ motion-use 使用 MIT 许可证。渲染引擎 HyperFrames 是 Apache-2.0。字�
 still/render 会立即报错。子命令支持 `--help`。
 镜头边界、锁恢复和 retime 的旁白校验要求见
 [影片契约](references/film.md#frame-boundaries-and-concurrent-jobs)。
+
+`motion-use init <名称>` 默认在 `~/motion-use/<名称>` 建项目，可用
+`MOTION_USE_PROJECTS` 改根目录；显式路径仍然有效。`motion-use list --json`
+可查项目及发布母版。制作前先审 SCRIPT.md，再审关键帧、片段节奏和成片。
+旁白可分开 `say/text`，字幕可按句、镜头或原始 cue 分组。素材支持无损图片序列、
+镜头相对时间及首尾帧停留。报告增加逐镜头运动诊断，选定静帧只检查附近的文字。
+接口细节见[影片契约](references/film.md)。

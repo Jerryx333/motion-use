@@ -237,7 +237,7 @@ function colorChange(file, w, h) {
 }
 
 // cuts: authored hard-cut times in seconds, always treated as transitions (not as motion).
-export function measureMotion(file, { cuts = [] } = {}) {
+export function measureMotion(file, { cuts = [], shots = [] } = {}) {
   const { width: W0, height: H0 } = probe(file);
   const h = Math.max(2, Math.round((H0 * WIDTH) / W0 / 2) * 2);
   const raw = decode(file, FPS, WIDTH, h, "gray");
@@ -364,6 +364,7 @@ export function measureMotion(file, { cuts = [] } = {}) {
     seconds: round(seconds, 2),
     cuts: cutStarts.map((i) => round((i + 1) / FPS, 2)),
     dissolves: diss.map((x) => ({ start: round(x.start, 2), end: round(x.end, 2) })),
+    shots: shotMotion(d, trans, shots, FPS),
     fast_ratio: round(count ? fast / count : 0, 4),
     still_ratio: round(count ? still / count : 0),
     drift_ratio: round(count ? drift / count : 0),
@@ -496,4 +497,21 @@ export function demoSimilarity(file, demos) {
   }
   const max = best.reduce((m, b) => Math.max(m, b.sim), 0);
   return { share: best.length ? +(hits / best.length).toFixed(3) : 0, max: +max.toFixed(3), closest };
+}
+
+// Reuse the same decoded differences. Cut/dissolve pairs and pairs straddling
+// a shot boundary never count as motion inside that shot. Per-shot lights are
+// diagnostic, not an additional release gate (short windows have few samples).
+export function shotMotion(differences, transitions, shots, fps = FPS) {
+  return shots.map((shot) => {
+    let fast = 0, count = 0, longest = 0, run = 0;
+    for (let i=0;i<differences.length;i++) {
+      if (i/fps < shot.start - 1e-7 || (i+1)/fps >= shot.end - 1e-7 || transitions[i]) {run=0;continue;}
+      count++; if (differences[i] >= FAST) fast++;
+      run = differences[i] < STILL ? run+1 : 0; longest=Math.max(longest,run);
+    }
+    const ratio = count ? fast/count : null;
+    const level = ratio === null ? "unknown" : ratio <= MOTION_LIMITS.fast_ratio.red ? "red" : ratio <= MOTION_LIMITS.fast_ratio.yellow ? "yellow" : "green";
+    return {id:shot.id,start:shot.start,end:shot.end,analysis_fps:fps,compared_frames:count,fast_frames:fast,fast_ratio:ratio===null?null:round(ratio,4),longest_still_s:round(longest/fps,3),level,diagnostic:true,lights:[{metric:"fast_ratio",value:ratio===null?null:round(ratio,4),level}]};
+  });
 }

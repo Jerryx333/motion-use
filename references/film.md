@@ -72,7 +72,7 @@ Composed helpers build on these: `shoot`, `card`, `pill`, `ripple`, `stroke`, `n
 
 `data` holds named values and series (≤ 100 KB) passed to the page as `film.data`; `chart`, `counter` and friends read them by key, and labels may be language maps. Changing a number in `film.json` changes that number in every language and format.
 
-`videos` declares footage: `{"name": {"file": "footage/demo.mp4", "at": 4, "from": 12.5, "rate": 1, "length": 6, "volume": 0}}`. `at` is the film second where the clip starts, `from` the source second, `rate` 0.25–4. The build extracts exactly the frames that window needs (film fps ÷ rate, ≤ 5,400 per film) as JPEGs, and the page loads the frames a seek needs before drawing, so footage stays deterministic and seekable. `motion.video(name, t)` returns the current frame (or `null` outside the clip) for `cover` or `drawImage`. Footage sound plays when `volume > 0`, only at rate 1. Validation rejects clips that run past their source or the film.
+`videos` declares footage: `{"name": {"file": "footage/demo.mp4", "at": 4, "from": 12.5, "rate": 1, "length": 6, "volume": 0}}`. `at` is the film second where the clip starts, `from` the source second, `rate` 0.25–4, and `length` is film seconds (consumes `length × rate` source seconds). The build extracts exactly the frames that window needs (film fps ÷ rate, ≤ 5,400 per film) as JPEGs, and the page loads the frames a seek needs before drawing, so footage stays deterministic and seekable. `motion.video(name, t)` returns the current frame (or `null` outside the clip) for `cover` or `drawImage`. Footage sound plays when `volume > 0`, only at rate 1. Validation rejects clips that run past their source or the film.
 
 `film.captions` is `[{text, start, end, estimated?}]` for the narration placed in the current language: sentence cues timed by edge-tts when the clip still matches its script, otherwise sentences timed by character share and marked `estimated`. `motion.captions(c, t)` draws them in a safe lower slot. Word-level timing is not available; pass explicit `times` to `words` for word-accurate emphasis.
 
@@ -84,7 +84,7 @@ Declare any other local file a library or an external engine loads under `files`
 
 Optional `libraries: ["vendor/library.js"]` loads explicit local classic browser bundles before the drawing code. Bundle ES modules into a browser file first. The film directory is not recursively copied. Optional `window.setupFilm(film, view, motion)` can return a promise to prepare geometry/renderers after fonts and images load; the engine waits for it. A WebGL renderer can draw into its own offscreen canvas and composite it into `ctx` during `drawFrame`. This is an authoring capability, not a built-in 3D scene generator. motion-render draws WebGL 1/2 itself (ANGLE on the GPU), so a three.js film renders natively; `--gpu` (Chrome on the GPU) is only for comparison or a feature motion-render lacks.
 
-`motionBlur` samples 1/2/4 subframes over a 0–1 frame backward shutter and averages the rendered canvases. The sampling order is deterministic. Default: one sample, no blur. Tune exposure for readable movement; blur does not rescue an unclear layout.
+`motionBlur` samples 1/2/4/8 subframes over a 0–1 frame backward shutter and averages the rendered canvases. The sampling order is deterministic. Default: one sample, no blur. Tune exposure for readable movement; blur does not rescue an unclear layout.
 
 ## Renderers
 
@@ -211,7 +211,7 @@ Generated narration is MP3 (`voiceover/<lang>/<shot-id>.mp3`, Azure: 24 kHz, 96 
 
 For per-shot timing, mark shots `"duration":"narration","tail":0.4` while retaining provisional numeric start/end. Generate narration first, then run `motion-use retime <film> --out <new-json-beside-film>`. It uses the longest measured clip across languages, adds the 0.08 s lead, 0.08 s end margin and requested tail, and rounds to whole frames. Other shots keep their frame-rounded durations. The proposal defaults to `film.retimed.json`; the source file and `brief.length` target are preserved. Review the difference before rendering the proposal. A target mismatch remains visible as a warning.
 
-Retime before placing external subtitles, cues, audio or footage; the command refuses those absolute-time dependencies instead of guessing how to move them. Root continuous narration cannot set per-shot lengths. A proposal over 180 seconds needs parts, described below. Music hit times and drawing choreography still need to follow the new shot windows.
+Retime before placing external subtitles/cues or absolute-time audio/footage; shot-anchored audio/footage can follow the retimed windows. Root continuous narration cannot set per-shot lengths. A proposal over 180 seconds needs parts, described below. Music hit times and drawing choreography still need to follow the new shot windows.
 
 For measured word timing, `voiceover --engine azure --word-timing` uses Azure Speech SDK 1.52.0 in an optional uv-managed Python environment. Credentials remain in the environment; audio and service word boundaries are cached together. No call to this service happens in catalog, handoff or retime. The normal Azure REST route remains audio-only. SDK unavailable or no returned boundaries means an explicit failure, not invented timing. [Azure event documentation](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-speech-synthesis#subscribe-to-synthesizer-events).
 
@@ -347,3 +347,94 @@ recordings remain usable as imported audio with explicit timing; they cannot be
 automatically retimed without provenance. Generation errors preserve prior audio,
 mark it stale and include errors in the JSON result. HTTP 429 receives two retries
 with 1s/2s backoff; service URLs are redacted from errors.
+
+### Project locations
+
+`motion-use init demo` creates `~/motion-use/demo/`; configure the root with
+`MOTION_USE_PROJECTS`. This is separate from `MOTION_USE_HOME`, which installs the
+CLI and renderer. `init ./demo`, `init .` and absolute paths remain explicit paths.
+Without an argument, init uses `film` (or `--name`). New authored projects include
+SCRIPT.md and reviews/ for the script-first production process in production.md.
+`motion-use list --json` lists direct child projects with name, duration and the
+standard `out/release/release-manifest.json`'s master path/time. Missing masters
+are marked; custom output folders and projects outside this root are not scanned.
+
+### Speech copy and subtitle grouping
+
+Narration can remain a string per language, or use distinct spoken/displayed copy:
+
+```json
+"narration": {"zh": {"say": "这是玛哟伊，十八兆。", "text": "这是 Mayoi，18 MB。"}}
+```
+
+TTS, ASR, cache freshness and narration retime use `say`; subtitles use `text`.
+Both are required for an object. Display-only edits do not regenerate audio.
+When the two texts differ, subtitle times are estimated over the actual spoken
+window; word timestamps are not exposed as measured display-word timing. Declare
+explicit captions/cues if that distinction matters for choreography.
+
+`captionStyle.split` is `sentence` (default), `shot` or `cue`. Sentence mode joins
+service fragments until a sentence-ending 。！？.!?; commas and 、 do not split
+sentences. Shot mode displays the shot's full display copy from its first cue to
+its last. Cue mode keeps service segmentation. Existing explicit `captions`
+retain their authored text/windows. Long sentences may need shot mode, shorter
+copy or explicit captions after checking composition and reading time.
+
+### Image sequences, clip holds and shot anchors
+
+`videos.length` is **film time**, not source time: `length × rate` seconds of the
+source are consumed from `from`. For a 4.80s source from zero at rate 1.16, the
+maximum length is 4.80 / 1.16 = 4.138s, also limited by the film/attached shot.
+Errors report the declared length, rate, consumed source, duration and maximum.
+
+```json
+"videos": {
+  "ui": {"frames": "capture/type/%05d.png", "fps": 30, "shot": "typing", "offset": 0.2, "hold": "last"},
+  "clip": {"file": "footage/demo.mp4", "shot": "demo", "offset": 0, "from": 0.27, "rate": 0.88}
+},
+"audio": [{"effect": "click", "shot": "typing", "delay": 0.4}]
+```
+
+A sequence uses one `%d` or zero-padded `%05d` pattern, source `fps` (>0, ≤240),
+and optional `startNumber` (default 0). Supported images: PNG/JPEG/WebP. Frames
+must be contiguous, same size, and inside the project (including symlink targets).
+A sequence has no sound. It is copied losslessly at source frame rate: each needed
+source frame once, without intermediate MP4 or JPEG conversion. `from` and `rate`
+work in source seconds as for videos. Snapshots and handoff include source frames.
+Budget: 21,600 source frames in a sequence; at most 5,400 built footage frames per
+film. High-resolution images can still use substantial memory/storage.
+
+For `videos`, `shot` + `offset` replaces `at`; offset is a non-negative delay
+inside that shot. For `audio`, `shot` + `delay` replaces `start`; audio `offset`
+continues to mean the source seek. Absolute fields cannot accompany anchors.
+No anchor means existing absolute placement. Attached video defaults to the
+remaining shot window or source duration, whichever is shorter.
+
+`hold:"last"` retains the final decoded frame after playback until the containing
+shot ends or another declared clip starts, whichever comes first. It also permits
+`length` to exceed available source duration without slowing `rate`. The held
+part is silent. `hold:"first"` holds the first frame before `at` back to the
+containing shot's start, then plays normally; it does not extend the end. Without
+hold, M.video returns null outside the declared playback window.
+
+Retime accepts shot-anchored videos/audio and recomputes their placement when
+validating the proposal. It still refuses absolute audio/video, external captions
+or cues, and continuous root narration. Explicit lengths must fit the new windows;
+retime reports a conflict instead of silently truncating content. Code event times,
+score hits and any unanchored choreography remain the author's responsibility.
+
+### Scoped still checks and shot motion diagnostics
+
+`still --shot id` probes only that shot plus 0.3s on each side; `still --at t`
+probes ±0.5s around each selected time. Overlapping windows merge, and refinement
+does not fill gaps between selections. Reading checks cut off by a selection edge
+are omitted to avoid false short-duration warnings. The result names its scope
+and sample count. Default still review and full render retain whole-film checking.
+
+`motion.shots` in verification reports contains each shot's fast_ratio, fast_frames,
+compared_frames, longest_still_s and diagnostic red/yellow/green light. It reuses
+the existing 12fps analysis; transitions and pairs straddling a shot boundary do
+not count as movement within that shot. Short shots may have no samples (`unknown`).
+These lights locate weak motion; they do not add release gates calibrated on long
+films. Range drafts return the same statistics in output.motion with times relative
+to the exported range, plus original `from`/`to`, and save a preview report.

@@ -149,14 +149,14 @@ export function collisionRuns(samples, { alpha = 0.25, ratio = 0.2, minDur = 0.0
 }
 
 /** Times to re-sample at frame resolution: every interval where the set of visible strings changed. */
-export function transitionTimes(samples, fps, { alpha = 0.25, cap = 4000 } = {}) {
+export function transitionTimes(samples, fps, { alpha = 0.25, cap = 4000, maxGap = Infinity } = {}) {
   const names = (s) => new Set(s.boxes.filter((b) => (b.alpha ?? 1) >= alpha).map((b) => b.text));
   const out = [];
   for (let i = 0; i + 1 < samples.length && out.length < cap; i++) {
     const a = names(samples[i]),
       b = names(samples[i + 1]);
     const changed = a.size !== b.size || [...a].some((x) => !b.has(x));
-    if (!changed) continue;
+    if (!changed || samples[i+1].t - samples[i].t > maxGap) continue;
     for (let t = samples[i].t + 1 / fps; t < samples[i + 1].t - 1e-6; t += 1 / fps) out.push(+t.toFixed(4));
   }
   return out;
@@ -327,9 +327,11 @@ async function browser() {
  * Draw a built film project at every `step` seconds and return the text runs that leave the
  * frame (all formats) or the safe area (portrait). Returns { runs, samples } or { skipped }.
  */
-export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3, native = null } = {}) {
-  const times = [];
-  for (let t = 0; t < duration - 1e-6; t += step) times.push(+t.toFixed(3));
+export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3, native = null, ranges = null } = {}) {
+  const windows = probeWindows(duration, ranges);
+  const times = [...new Set(windows.flatMap(([a,b]) => {
+    const out=[]; for(let t=a;t<b-1e-6;t+=step) out.push(+t.toFixed(4)); return out;
+  }))];
   let server, b;
   try {
     // The probe is the film runtime's own JS: in Chrome, or in motion-render's V8 (same page).
@@ -359,18 +361,19 @@ export async function probeText(projDir, duration, { step = 0.1, minRun = 0.3, n
     const all = meta.samples;
     const runs = overflowRuns(all, { width: meta.width, height: meta.height, safe: meta.safe, vertical: meta.vertical, step, minRun });
     // Cross-fades are shorter than the sampling step: re-draw every frame where text changes.
-    const fine = transitionTimes(all, meta.fps || 30);
+    const fine = transitionTimes(all, meta.fps || 30, {maxGap:step*1.5});
     const dense = [...all];
     if (fine.length) dense.push(...(await draw(fine)).samples);
     dense.sort((a, b) => a.t - b.t);
     return {
+      scope: ranges ? windows : "film",
       samples: dense.length,
       step,
       runs: [
         ...runs,
         ...collisionRuns(dense, { minDur: Math.max(0.05, 2 / (meta.fps || 30)) }),
         // the frame-accurate samples time when a line appears and goes
-        ...readingRuns(dense, { width: meta.width, height: meta.height }),
+        ...readingRuns(dense, { width: meta.width, height: meta.height }).filter((r) => !ranges || windows.some(([a,b]) => r.from > a + step && r.to < b - step)),
         ...contrastRuns(all, { step, minRun }),
       ].sort((a, b) => a.from - b.from),
       page_errors: errors.slice(0, 5),
@@ -406,5 +409,12 @@ export function describeText(check) {
   }
   for (const k of ["reading", "contrast"])
     if (count[k] > 8) out.push(`${count[k] - 8} more ${k} notes in report.json text_check`);
+  return out;
+}
+
+export function probeWindows(duration, ranges = null) {
+  const sorted = (ranges ?? [[0,duration]]).map(([a,b]) => [Math.max(0,a),Math.min(duration,b)]).filter(([a,b])=>b>a).sort((a,b)=>a[0]-b[0]);
+  const out=[];
+  for(const [a,b] of sorted) {const last=out.at(-1);if(last && a<=last[1]) last[1]=Math.max(last[1],b);else out.push([a,b]);}
   return out;
 }

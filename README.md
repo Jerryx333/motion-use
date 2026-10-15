@@ -160,3 +160,12 @@ for NDJSON events). Overlapping still/render jobs sharing `--out` now fail early
 `motion-use <command> --help` displays CLI usage. See
 [frame boundaries and concurrent jobs](references/film.md#frame-boundaries-and-concurrent-jobs)
 for exact cut timing, lock recovery and narration freshness requirements.
+
+New films use `motion-use init <name>` under `~/motion-use/<name>` (configure
+`MOTION_USE_PROJECTS`); `motion-use list --json` finds projects and their release
+masters. Explicit paths still work. Review SCRIPT.md before production, then
+keyframes, range drafts and the final cut. Narration supports separate `{say,text}`
+copy and sentence/shot/cue subtitle grouping. Footage accepts lossless numbered
+image sequences, shot-relative placement and first/last frame holds. Reports now
+include per-shot motion diagnostics; selected stills scope text checks to the
+requested time windows. See the [film contract](references/film.md).

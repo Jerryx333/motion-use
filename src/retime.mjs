@@ -1,3 +1,4 @@
+import { spoken } from "./caption-plan.mjs";
 import { narrationFreshness } from "./voiceover.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -20,8 +21,8 @@ export function retimeFilm(input, { out } = {}) {
   if (
     data.captions ||
     data.cues ||
-    data.audio?.length ||
-    Object.keys(data.videos ?? {}).length
+    data.audio?.some((a) => !a.shot) ||
+    Object.values(data.videos ?? {}).some((v) => !v.shot)
   )
     throw new Error(
       "Retime before placing external captions, cues, audio or footage; their absolute times need deliberate editing.",
@@ -57,7 +58,7 @@ export function retimeFilm(input, { out } = {}) {
           throw new Error(
             `${lang}/${shot.id}: narration file escapes the project`,
           );
-        const freshness = narrationFreshness(voDir, clip, shot.narration[lang], checked.film.narrationConfig, lang);
+        const freshness = narrationFreshness(voDir, clip, spoken(typeof shot.narration === "string" ? shot.narration : shot.narration[lang]), checked.film.narrationConfig, lang);
         if (!freshness.current)
           throw new Error(`${lang}/${shot.id}: ${freshness.imported ? "unverified recording (no matching narration manifest)" : "stale narration"}; run voiceover --force to generate current speech before retime`);
         return audioSeconds(clip);

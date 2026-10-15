@@ -1,3 +1,4 @@
+import { projectTarget, listProjects } from "./projects.mjs";
 import { acquireOutputLock } from "./output-lock.mjs";
 import { createProgress } from "./progress.mjs";
 import { execFileSync, spawn } from "node:child_process";
@@ -71,7 +72,8 @@ const HELP = `motion-use ${VERSION} — directed films, exact-time animation, lo
 
 Usage: motion-use <command> [options]
 
-  init [dir]          Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
+  list                List projects under ~/motion-use (override: MOTION_USE_PROJECTS)
+  init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
                       --mode template keeps the scene-template workflow; --style/--story also select it
   validate [brief]    Check a brief: fields, files, voiceover lengths, characters the fonts cannot draw
@@ -157,6 +159,7 @@ export async function main(argv) {
     return (console.log(VERSION), 0);
   const commands = {
     init,
+    list: listProjectsCmd,
     validate,
     voiceover,
     still,
@@ -294,7 +297,9 @@ const STORIES = [
   "walkthrough",
 ];
 
-async function init(o, [dir = "."]) {
+async function init(o, [input]) {
+  const dir = projectTarget(input ?? o.name ?? "film");
+  if (!o.name && input && !input.includes("/") && !input.includes("\\") && input !== "." && input !== "..") o.name=input;
   if (o.mode && !["film", "template"].includes(o.mode))
     return fail("--mode must be film or template", o.json);
   if (o.mode === "film" || (!o.mode && !o.story && !o.style)) {
@@ -856,13 +861,18 @@ async function render(o, [briefPath]) {
           return { ok: false, id, error: hf.out.trim().split("\n").slice(-15).join("\n") };
         fs.mkdirSync(path.dirname(previewFile), { recursive: true });
         commitOutput(out, tmpPreview, previewFile);
-        let motion = null;
+        let motion = null, previewReport = null;
         try {
-          const m = measureMotion(previewFile);
-          motion = { level: gradeMotion(m).level, fast_ratio: m.fast_ratio, blank_run_s: m.blank_run_s, blue_purple_share: m.blue_purple_share };
-        } catch {}
+          const shots = brief.shots?.map((s)=>({id:s.id,start:Math.max(0,s.start-from),end:Math.min(to-from,s.end-from)})).filter((s)=>s.end>s.start) ?? [];
+          const m = measureMotion(previewFile,{shots,cuts:shots.slice(1).map((s)=>s.start)});
+          motion = { ...m, level: gradeMotion(m).level };
+          const review = path.join(out,"review",id,`preview-${from}-${to}`);
+          claimDir(review);
+          previewReport = path.join(review,"report.json");
+          fs.writeFileSync(previewReport,JSON.stringify({file:previewFile,preview:true,from,to,motion},null,2)+"\n");
+        } catch(e) { motion = {skipped:`motion analysis failed: ${e.message}`}; }
         if (!o.json) console.log(previewFile);
-        return { ok: true, id, preview: true, file: previewFile, from, to, motion, renderer: usedRenderer(brief, o) };
+        return { ok: true, id, preview: true, file: previewFile, from, to, motion, report:previewReport, renderer: usedRenderer(brief, o) };
       }
       const file = path.join(
         q === "draft" ? path.join(out, "preview") : out,
@@ -1212,11 +1222,11 @@ async function filmTextCheck(proj, brief, o) {
   if (brief.engine && !brief.source) return ENGINE_TEXT;
   const pick = pickRenderer(brief, o);
   if (pick.renderer === "native") {
-    const r = await probeText(proj.dir, proj.total, { native: pick });
+    const r = await probeText(proj.dir, proj.total, { native: pick, ranges:o._textRanges });
     if (!r.skipped || !unsupportedContext(r.skipped)) return r;
     fallBack(o, r.skipped);
   }
-  return probeText(proj.dir, proj.total);
+  return probeText(proj.dir, proj.total, { ranges:o._textRanges });
 }
 
 /**
@@ -1701,13 +1711,14 @@ async function still(o, [briefPath]) {
       console.log(sheet ?? `${dir} (contact sheet not created)`);
       for (let i = 0; i < pngs.length; i++) console.log(`  ${times[i].toFixed(3)}s ${proj.scenes.find((s) => times[i] >= s.start && times[i] < s.start + s.duration)?.id ?? "frame"}: ${pngs[i]}`);
     }
-    // Text check over the whole film, not only the sampled frames.
+    // Explicit still selections inspect only those shots/time neighborhoods.
     let text = null;
     if (proj.film && !o["no-text-check"] && !proj.range) {
-      text = await filmTextCheck(proj, brief, o);
+      const ranges = shotIds ? proj.scenes.filter((s)=>shotIds.includes(s.id)).map((s)=>[s.start-0.3,s.start+s.duration+0.3]) : at ? times.map((t)=>[t-0.5,t+0.5]) : null;
+      text = await filmTextCheck(proj, brief, {...o,_textRanges:ranges});
       if (!o.json) for (const line of describeText(text)) console.error(`warning: ${id}: ${line}`);
     }
-    return { ok: true, id, frames: pngs, sheet, at: times, renderer: usedRenderer(brief, o), ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs } } : {}) };
+    return { ok: true, id, frames: pngs, sheet, at: times, renderer: usedRenderer(brief, o), ...(pure === null ? {} : { pure }), ...(text ? { text_check: text.skipped ? text : { runs: text.runs, scope:text.scope, samples:text.samples } } : {}) };
   });
   if (o.json && r.results)
     console.log(
@@ -2240,5 +2251,13 @@ async function instrumentsCmd(o, [action = "list", ...extra]) {
     console.log(r.pack ? `pack ${PACK_VERSION}: ${r.pack}` : `no recorded instruments yet (${INSTALL_HINT}); synthesized voices only`);
     for (const i of list) console.log(`  ${i.name.padEnd(16)} ${String(i.family).padEnd(8)} ${i.range ? i.range.join("–") : (i.hits ?? []).join("/")}${i.maxDur ? ` · ≤${i.maxDur}s` : ""}${i.synth ? " · synthesized" : ""}`);
   }
+  return 0;
+}
+
+async function listProjectsCmd(o, args) {
+  if(args.length) return fail("list takes no positional arguments",o.json);
+  const result=listProjects();
+  if(o.json) console.log(JSON.stringify({ok:true,...result},null,2));
+  else {console.log(result.root);for(const p of result.projects) console.log(`${p.name??p.dir}  ${p.duration??"?"}s  ${p.release ? `${p.release.created??"?"} ${p.release.file}${p.release.exists?"":" (missing)"}` : "no release"}`);}
   return 0;
 }

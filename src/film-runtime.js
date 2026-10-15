@@ -85,12 +85,17 @@
   if (typeof window.__filmKit === "function")
     for (const [key, value] of Object.entries(window.__filmKit(view, film)))
       if (!Object.hasOwn(motion, key)) motion[key] = value;
-  // Footage frames were extracted at build time; each sample time maps to one JPEG.
+  // Footage frames were extracted at build time; each sample time maps to one local image.
   const frameCache = new Map();
   const frameSrc = (v, time) => {
-    const k = Math.floor((time - v.at) * v.fps + 1e-6);
-    if (k < 0 || time >= v.at + v.length) return null;
-    return `${v.dir}/${String(Math.min(k, v.frames - 1)).padStart(5, "0")}.jpg`;
+    let k = Math.floor((time - v.at) * v.fps + (v.frameOffset ?? 0) + 1e-6);
+    if (time < v.at) {
+      if (v.hold !== "first" || time < v.holdFrom) return null;
+      k = 0;
+    }
+    if (v.hold === "last" && time >= v.at + (v.playLength ?? v.length) && time >= v.holdUntil) return null;
+    if (time >= v.at + v.length && (v.hold !== "last" || time >= v.holdUntil)) return null;
+    return `${v.dir}/${String(Math.min(k, v.frames - 1)).padStart(5, "0")}.${v.ext ?? "jpg"}`;
   };
   motion.video = (name, time) => {
     const v = film.videos?.[name];
