@@ -1,6 +1,6 @@
 [package]
 name = "motion-render"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2021"
 description = "Native renderer for motion-use films: drawFrame on a Canvas 2D over Skia, JS in V8"
 license = "MIT"

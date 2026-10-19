@@ -1,6 +1,11 @@
 import { projectTarget, listProjects } from "./projects.mjs";
 import { acquireOutputLock } from "./output-lock.mjs";
 import { createProgress } from "./progress.mjs";
+import { createJournal, aggregateJournal } from "./journal.mjs";
+import { runBatch, planBatch, readBatchStatus } from "./batch.mjs";
+import { packageDelivery, checkDelivery } from "./delivery.mjs";
+import { diskSpace, storagePreflight, planCacheCleanup, applyCacheCleanup } from "./storage.mjs";
+import { checkTeachingFile } from "./teaching.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -34,6 +39,7 @@ import {
   pickEngine,
 } from "./voiceover.mjs";
 import {
+  FILM_FORMATS,
   buildFilm,
   checkFilm,
   initFilm,
@@ -50,7 +56,7 @@ import { fetchReference } from "./reference.mjs";
 import { analyzeBeats, decodeMono } from "./beats.mjs";
 import { compareVideos } from "./compare.mjs";
 import { measureMotion, gradeMotion } from "./motion-check.mjs";
-import { checkNarration, describeNarration, narrationItems } from "./narration-check.mjs";
+import { checkNarration, describeNarration, narrationItems, resolveNarrationCheckConfig, writeNarrationReview } from "./narration-check.mjs";
 import { probeText, describeText } from "./text-probe.mjs";
 import { createSnapshot, findSnapshot, restoreSnapshot } from "./snapshot.mjs";
 import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry, writeReleaseManifest } from "./release.mjs";
@@ -72,6 +78,12 @@ const HELP = `motion-use ${VERSION} — directed films, exact-time animation, lo
 
 Usage: motion-use <command> [options]
 
+  batch plan|run|status <tasks.json>  Hash-verified DAG tasks, failure isolation and resume (--concurrency 2)
+  delivery <delivery.json> --out <fresh-dir>  Portable videos/offline/site packages; --check verifies a package
+  preflight [film]     Observe free disk and estimate render storage before starting
+  clean plan|apply     Preview owned rebuildable caches; apply a frozen plan (see references/storage.md)
+  stats [film|events.jsonl]  Aggregate persisted processing/wall time; unmeasured values remain null
+  teaching [film]      Check authored teaching state (--plan lists continuous sample times; --states JSON)
   list                List projects under ~/motion-use (override: MOTION_USE_PROJECTS)
   init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
@@ -102,7 +114,7 @@ Usage: motion-use <command> [options]
   study <id> <dir>    Create a renderable 6-second study from a catalog card (illustrative, intentionally silent)
   concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
   geo <json|world|china-provinces> Project/simplify map data (--out <new.json>); builtins include provenance
-  retime [film]       Propose shot windows from actual narration (shot.duration: "narration", tail); --out JSON
+  retime [film]       Propose shot windows from actual narration; fresh numbered JSON each run (--out refuses conflicts)
   music [film]        Play the film's own score (composition/score.js) into a WAV without rendering picture:
                       why, key, tempo, instruments, notes per shot and score warnings (--lang, --out file.wav)
   instruments [list|install]  The recorded instrument pack the scores play (CC0); install fetches it
@@ -119,14 +131,16 @@ Options for still/render:
   --quality <q>       render only: draft | standard | high (default: standard)
   --max-size <size>   render only: re-encode any MP4 above this size (e.g. 9MB) until it fits
   --target github     render only: same as --max-size 9.5MB (GitHub's inline video limit is 10 MB)
-  --force             Overwrite output files motion-use did not write
+  --force             Overwrite output files motion-use did not write (retime always preserves proposals)
   --allow-custom-html Render "html" scenes (custom code; only for briefs you trust)
   --allow-code       Render authored film code (only projects you wrote or trust)
   --no-normalize     Keep original audio levels (default: two-pass -14 LUFS / -1 dBTP)
   --progress <mode>   Phase/frame progress on stderr: text, json or none (default none)
   --gate              render: fail on a flagged narration line or text running off the frame
                       (reading-time and contrast notes stay warnings)
-  --no-asr            render: skip the narration transcription check (--asr-model small|medium|large-v3)
+  --no-asr            Skip transcription, recording SKIPPED; release/gate needs --allow-asr-skip "reason"
+  --asr-model <name>   Override film.narrationCheck.model; --asr-fallback-model checks only flagged clips
+  --journal <jsonl>   Persist bounded operational events (project .motion-use/events.jsonl by default)
   --no-text-check     still/render: skip measuring drawn text against the frame and safe area
   --no-captions       film still/render: suppress M.captions subtitles; custom drawn text remains
   --no-bgm            film still/render: omit background music, retain narration and SFX
@@ -160,6 +174,12 @@ export async function main(argv) {
   const commands = {
     init,
     list: listProjectsCmd,
+    batch: batchCmd,
+    delivery: deliveryCmd,
+    preflight: preflightCmd,
+    clean: cleanCmd,
+    stats: statsCmd,
+    teaching: teachingCmd,
     validate,
     voiceover,
     still,
@@ -206,6 +226,17 @@ export async function main(argv) {
         at: { type: "string" },
         quality: { type: "string" },
         progress: { type: "string" },
+        journal: { type: "string" },
+        concurrency: { type: "string" },
+        "dry-run": { type: "boolean" },
+        "no-resume": { type: "boolean" },
+        "allow-exec": { type: "boolean" },
+        "state-file": { type: "string" },
+        "cache-home": { type: "string" },
+        "asr-fallback-model": { type: "string" },
+        "allow-asr-skip": { type: "string" },
+        states: { type: "string" },
+        plan: { type: "boolean" },
         engine: { type: "string" },
         "max-size": { type: "string" },
         target: { type: "string" },
@@ -260,7 +291,29 @@ export async function main(argv) {
     return fail("--progress must be text, json or none", args.values.json);
   if (cmd !== "upgrade") await maybeNotify(VERSION);
   let unlock;
-  const progress = createProgress(args.values.progress);
+  let journalFile = args.values.journal ?? process.env.MOTION_USE_JOURNAL_FILE;
+  if (!journalFile && ["render", "still", "voiceover", "retime", "music", "validate", "teaching"].includes(cmd)) {
+    const projectArg = cmd === "voiceover" && args.positionals[0] === "check" ? args.positionals[1] : args.positionals[0];
+    const project = resolveProject(projectArg);
+    if (fs.existsSync(project)) journalFile = path.join(path.dirname(project), ".motion-use", "events.jsonl");
+  }
+  const record = journalFile ? createJournal(path.resolve(journalFile)) : null;
+  const starts = new Map();
+  const progress = createProgress(args.values.progress, undefined, undefined, row => {
+    if (!record) return;
+    const key = `${row.phase}/${row.lang ?? ""}/${row.format ?? ""}`;
+    if (row.event === "start") starts.set(key, row.elapsed_s);
+    const terminal = ["finish", "error"].includes(row.event);
+    const duration = terminal && starts.has(key) ? row.elapsed_s - starts.get(key) : undefined;
+    record(row.phase, row.event === "start" ? "started" : terminal ? "finished" : row.event, {
+      ...(duration === undefined ? {} : { duration_s: duration }),
+      ...(terminal ? { status: row.event === "error" ? "failed" : "success" } : {}),
+      ...(row.frames === undefined ? {} : {frames:row.frames,total:row.total}),
+      ...(row.output_seconds === undefined ? {} : {output_seconds:row.output_seconds}),
+      ...(row.cache_hit === undefined ? {} : {cache_hit:row.cache_hit}),
+    });
+    if (terminal) starts.delete(key);
+  });
   args.values._progress = progress;
   try {
     if (["render", "still"].includes(cmd)) {
@@ -657,7 +710,7 @@ async function render(o, [briefPath]) {
     }
     if (!o.json)
       console.error(`restored snapshot ${found.record.id} (${found.record.created}); output goes to ${path.join(out, `snapshot-${found.record.id}`)}`);
-    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
+    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, "no-asr": found.record.renderOptions?.noAsr ?? o["no-asr"], "allow-asr-skip": found.record.renderOptions?.asrWaiver ?? o["allow-asr-skip"], _frozenNarrationCheck: found.record.renderOptions?.narrationCheck, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
   }
   if (o.release) {
     if (o["max-size"] || o.target)
@@ -714,6 +767,11 @@ async function render(o, [briefPath]) {
       else printReport(c.report);
       return 1;
     }
+    o._storage = projectSpace(briefPath, o);
+    if (!o._storage.ok && !o.json) console.error("warning: estimated render storage exceeds current free space; see preflight --json for assumptions");
+    o._teaching = await checkTeachingFile(resolveProject(briefPath), { samplesFile: o.states });
+    if ((o.release || o.gate) && ["FAIL", "UNREVIEWED"].includes(o._teaching.status) && c.film.teaching?.assertions?.length)
+      return printOperational(o, {ok:false,error:"teaching assertions require complete passing author-state samples; inspect teaching --plan and teaching --states",teaching:o._teaching});
     o._progress?.("narration", "start");
     const generated = o.range ? { rows: [] } : await generateFilmNarration(c.film, {
       langs: c.langs,
@@ -722,6 +780,7 @@ async function render(o, [briefPath]) {
       log: o.json ? () => {} : (m) => console.error(m),
     });
     o._progress?.("narration", "finish");
+    for (const row of generated.rows) if (row.status === "unchanged") o._progress?.("tts", "cached", {cache_hit:true});
     const failed = generated.rows.filter((r) => r.status === "error");
     if (failed.length)
       return fail(
@@ -796,14 +855,24 @@ async function render(o, [briefPath]) {
   }
   // Narration check: what speech recognition hears against each script line.
   let narrationCheck = null;
-  if (!o.range && !o["no-asr"]) {
+  if (!o.range) {
     o._progress?.("narration_check", "start");
     narrationCheck = runNarrationCheck(briefPath, o);
     o._progress?.("narration_check", "finish");
+    const reviewRoot = path.resolve(o.out ?? path.join(path.dirname(resolveProject(briefPath)), "out"));
+    fs.mkdirSync(reviewRoot, {recursive:true});
+    const reviewDir = fs.mkdtempSync(path.join(reviewRoot, "narration-review-"));
+    narrationCheck.review_html = path.join(reviewDir, "index.html");
+    writeNarrationReview(narrationCheck, narrationCheck.review_html);
+    fs.writeFileSync(path.join(reviewDir, "report.json"), JSON.stringify(narrationCheck,null,2)+"\n");
+    for (let n=0;n<(narrationCheck.cache?.hits ?? 0);n++) o._progress?.("asr", "cached", {cache_hit:true});
+    const rejectNarration = error => printOperational(o, {ok:false,error,narration_check:{status:narrationCheck.status,config:narrationCheck.config,review_html:narrationCheck.review_html}});
     const quiet = narrationCheck.skipped && !narrationCheck.lines.length && narrationCheck.skipped.startsWith("no generated");
     if (!o.json && !quiet) for (const line of describeNarration(narrationCheck)) console.error(`warning: ${line}`);
-    if (o.gate && !narrationCheck.skipped && !narrationCheck.ok)
-      return fail(`narration check flagged ${narrationCheck.lines.filter((l) => l.flagged).length} line(s); listen to them and fix the script or the voice (--gate)`, o.json);
+    if ((o.gate || o.release) && narrationCheck.status === "FAIL")
+      return rejectNarration(`narration check flagged ${narrationCheck.lines.filter((l) => l.flagged).length} line(s); listen and fix the voice or record an exact narrationReviews entry`);
+    if ((o.release || o.gate) && narrationCheck.required && ["SKIPPED", "UNREVIEWED"].includes(narrationCheck.status) && !narrationCheck.waiver)
+      return rejectNarration(`narration check ${narrationCheck.status}: ${narrationCheck.skipped ?? "incomplete transcription"}; restore ASR or pass --allow-asr-skip with a reviewable reason`);
   }
   // Snapshot: the exact inputs of this render, so the cut can be rebuilt later.
   let snapshot = o._snapshot ?? null,
@@ -814,7 +883,7 @@ async function render(o, [briefPath]) {
       const c = checkFilm(briefPath, { ...o });
       const outDir = path.resolve(o.out ?? path.join(path.dirname(filmFile), "out"));
       try {
-        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) } }).id;
+        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), noAsr: Boolean(o["no-asr"]), asrWaiver: o["allow-asr-skip"] ?? null, narrationCheck: narrationCheck?.config ?? null } }).id;
       } catch (e) {
         if (!o.json) console.error(`warning: snapshot not saved: ${e.message}`);
       }
@@ -1000,11 +1069,15 @@ async function render(o, [briefPath]) {
         for (const line of describeText(textCheck)) verification.warnings.push(line);
       }
       if (narrationCheck) {
-        verification.narration_check = narrationCheck.skipped
-          ? { skipped: narrationCheck.skipped }
-          : { ok: !narrationCheck.lines.some((l) => l.lang === proj.lang && l.flagged), model: narrationCheck.model, lines: narrationCheck.lines.filter((l) => l.lang === proj.lang) };
+        const lines = narrationCheck.lines.filter((l) => l.lang === proj.lang);
+        verification.narration_check = { ...narrationCheck, lines, ...(narrationCheck.skipped ? {} : { ok: !lines.some(l => l.flagged), status: lines.some(l => l.status === "UNREVIEWED") ? "UNREVIEWED" : lines.some(l => l.flagged) ? "FAIL" : "PASS", human_review: lines.length && lines.every(l => l.human_review === "PASS") ? "PASS" : "UNREVIEWED" }) };
+        const html = path.join(path.dirname(verification.report), "narration.html");
+        writeNarrationReview(verification.narration_check, html);
+        verification.narration_check.review_html = html;
         for (const line of describeNarration({ lines: verification.narration_check.lines ?? [] })) verification.warnings.push(line);
       }
+      verification.storage_preflight = o._storage ?? null;
+      verification.teaching = o._teaching ?? null;
       verification.snapshot = snapshot;
       verification.variants = { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) };
       // pixels differ slightly between renderers: the report says which one made this file
@@ -1054,8 +1127,11 @@ async function render(o, [briefPath]) {
           return { ok: false, id, file, error: `release masters: ${e.message}` };
         }
       }
+      o._progress?.("output", "finish", {output_seconds:verification.observed.seconds});
       return {
         ok: verification.ok,
+        storage_preflight: o._storage ?? null,
+        teaching: o._teaching ?? null,
         id,
         file,
         cover,
@@ -1098,7 +1174,7 @@ async function render(o, [briefPath]) {
           independent_reviews: verification.independent_reviews?.length ?? 0,
           narration_check: verification.narration_check && (verification.narration_check.skipped
             ? verification.narration_check
-            : { ok: verification.narration_check.ok, flagged: verification.narration_check.lines.filter((l) => l.flagged).map((l) => ({ id: l.id, similarity: l.similarity, heard: l.heard, changes: l.changes.filter((c) => c.flag) })) }),
+            : { ok: verification.narration_check.ok, status: verification.narration_check.status, human_review: verification.narration_check.human_review, config: verification.narration_check.config, review_html: verification.narration_check.review_html, flagged: verification.narration_check.lines.filter((l) => l.flagged).map((l) => ({ id: l.id, similarity: l.similarity, heard: l.heard, changes: l.changes.filter((c) => c.flag) })) }),
           text_check: textCheck && (textCheck.skipped ? textCheck : { runs: textCheck.runs }),
         },
         snapshot,
@@ -1116,6 +1192,7 @@ async function render(o, [briefPath]) {
       snapshot,
       version: VERSION,
       film: filmFile ? { file: filmFile, sha256: sha(filmFile) } : null,
+      narrationCheck: narrationCheck ? { status: narrationCheck.status, human_review: narrationCheck.human_review, config: narrationCheck.config, waiver: narrationCheck.waiver ?? null, skipped: narrationCheck.skipped ?? null } : null,
     });
     if (!o.json) console.log(releaseManifest);
     if (filmFile)
@@ -1469,7 +1546,7 @@ function fitSize(file, max, workDir) {
 async function voiceover(o, [briefPath, ...rest]) {
   if (briefPath === "check") return voiceoverCheck(o, rest);
   if (isFilm(briefPath)) {
-    const c = checkFilm(briefPath, { ...o, skipGeneratedVoiceover: true });
+    const c = checkFilm(briefPath, { ...o, skipGeneratedVoiceover: true, phase: "narration" });
     if (!c.ok) {
       if (o.json)
         console.log(JSON.stringify({ ok: false, ...c.report }, null, 2));
@@ -1478,6 +1555,7 @@ async function voiceover(o, [briefPath, ...rest]) {
     }
     if (o.engine && !["edge", "azure"].includes(o.engine))
       return fail("--engine must be azure or edge", o.json);
+    o._progress?.("tts", "start");
     const res = await generateFilmNarration(c.film, {
       langs: c.langs,
       engine: o.engine,
@@ -1485,7 +1563,9 @@ async function voiceover(o, [briefPath, ...rest]) {
       wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
     });
-    const post = checkFilm(briefPath, { ...o, requireNarration: c.langs });
+    o._progress?.("tts", "finish");
+    for (const row of res.rows) if (row.status === "unchanged") o._progress?.("tts", "cached", {cache_hit:true});
+    const post = checkFilm(briefPath, { ...o, requireNarration: c.langs, phase: "narration" });
     const ok = post.ok && !res.rows.some((r) => r.status === "error");
     if (o.json)
       console.log(
@@ -1565,22 +1645,35 @@ async function voiceover(o, [briefPath, ...rest]) {
 /** Narration clips of a project with their scripts, filtered to the languages asked for. */
 function projectNarration(briefPath, o) {
   if (isFilm(briefPath)) {
-    const c = checkFilm(briefPath, { ...o, skipGeneratedVoiceover: false });
-    return { items: narrationItems(c.film).filter((it) => c.langs.includes(it.lang)), dir: c.film.narrationConfig?.dir };
+    const c = checkFilm(briefPath, { ...o, skipGeneratedVoiceover: false, phase: "narration" });
+    if (!c.ok) throw new Error(c.report.errors.map(e => `${e.path}: ${e.message}`).join("; "));
+    return { project: c.film, items: narrationItems(c.film).filter((it) => c.langs.includes(it.lang)), dir: c.film.narrationConfig?.dir };
   }
   const { data, dir } = readBrief(resolveProject(briefPath));
   const checked = validateBrief(data, dir);
   const langs = list(o.lang) ?? checked.brief.languages ?? [];
-  return { items: narrationItems(checked.brief).filter((it) => langs.includes(it.lang)), dir: checked.brief.voiceover?.dir };
+  return { project: { ...checked.brief, narrationCheck: data.narrationCheck }, items: narrationItems(checked.brief).filter((it) => langs.includes(it.lang)), dir: checked.brief.voiceover?.dir };
 }
 
 function runNarrationCheck(briefPath, o) {
-  const { items, dir } = projectNarration(briefPath, o);
-  return checkNarration(items, { dir, model: o["asr-model"], force: Boolean(o._refreshAsr), log: o.json ? () => {} : (m) => console.error(m) });
+  const { items, dir, project } = projectNarration(briefPath, o);
+  const config = o._frozenNarrationCheck ?? resolveNarrationCheckConfig(project, { model: o["asr-model"], fallbackModel: o["asr-fallback-model"] });
+  const result = o["no-asr"]
+    ? { ok: true, status: "SKIPPED", human_review: "UNREVIEWED", lines: [], config, skipped: "--no-asr" }
+    : checkNarration(items, { ...config, dir, force: Boolean(o._refreshAsr), log: o.json ? () => {} : (m) => console.error(m) });
+  return { ...result, required: items.length > 0, ...(o["allow-asr-skip"]?.trim() ? { waiver: { reason: o["allow-asr-skip"].trim() } } : {}) };
 }
 
 async function voiceoverCheck(o, [briefPath]) {
+  o._progress?.("asr", "start");
   const r = runNarrationCheck(briefPath, { ...o, _refreshAsr: Boolean(o.force) });
+  o._progress?.("asr", "finish");
+  for (let n=0;n<(r.cache?.hits ?? 0);n++) o._progress?.("asr", "cached", {cache_hit:true});
+  if (o.out) {
+    const html = path.resolve(o.out);
+    if (fs.existsSync(html)) throw new Error(`review output already exists: ${html}; choose a fresh --out`);
+    writeNarrationReview(r, html); r.review_html = html;
+  }
   if (o.json) console.log(JSON.stringify(r, null, 2));
   else if (r.skipped) console.error(`motion-use: narration check skipped: ${r.skipped}`);
   else {
@@ -2006,6 +2099,7 @@ function contactSheet(pngs, out, fmt) {
 
 async function doctor(o) {
   const checks = [];
+  const disk = diskSpace(o.out ?? process.cwd());
   const add = (name, ok, detail, fix) =>
     checks.push({ name, ok, detail, ...(ok ? {} : { fix }) });
   const major = Number(process.versions.node.split(".")[0]);
@@ -2103,6 +2197,7 @@ async function doctor(o) {
           checks,
           optional,
           voiceover_default_engine: defaultEngine,
+          disk,
         },
         null,
         2,
@@ -2115,6 +2210,7 @@ async function doctor(o) {
       );
     for (const c of optional)
       console.log(`${c.ok ? "ok  " : "--  "} ${c.name.padEnd(28)} ${c.detail}`);
+    console.log(`disk available: ${(disk.available_bytes / 1024 ** 3).toFixed(2)} GiB (observed; use preflight <film> for an estimate)`);
     console.log(`voiceover default engine: ${defaultEngine}`);
     console.log(ok ? "all good" : "some checks failed");
   }
@@ -2260,4 +2356,76 @@ async function listProjectsCmd(o, args) {
   if(o.json) console.log(JSON.stringify({ok:true,...result},null,2));
   else {console.log(result.root);for(const p of result.projects) console.log(`${p.name??p.dir}  ${p.duration??"?"}s  ${p.release ? `${p.release.created??"?"} ${p.release.file}${p.release.exists?"":" (missing)"}` : "no release"}`);}
   return 0;
+}
+
+function printOperational(o, result) {
+  console.log(JSON.stringify(result, null, 2));
+  return result.ok === false ? 1 : 0;
+}
+
+async function batchCmd(o, [action, file, ...extra]) {
+  if (!['plan', 'run', 'status'].includes(action) || !file || extra.length)
+    return fail('batch plan|run|status <tasks.json> [--concurrency 2] [--dry-run] [--no-resume]', o.json);
+  const options = { concurrency: o.concurrency === undefined ? undefined : Number(o.concurrency), resume: !o['no-resume'], dryRun: Boolean(o['dry-run']), allowExec: Boolean(o['allow-exec']), stateFile: o['state-file'] };
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (action === 'run') { process.on('SIGINT', cancel); process.on('SIGTERM', cancel); }
+  try {
+    const r = action === 'plan' ? planBatch(file, options) : action === 'status' ? readBatchStatus(file, options) : await runBatch(file, {...options,signal:controller.signal});
+    return printOperational(o, r);
+  } finally {
+    if (action === 'run') { process.off('SIGINT', cancel); process.off('SIGTERM', cancel); }
+  }
+}
+
+async function deliveryCmd(o, [file, ...extra]) {
+  if (extra.length || (!file && !o.check) || (o.check && !o.out && !file)) return fail('delivery <delivery.json> --out <fresh-dir> [--mode videos|offline|site]; delivery --check --out <package>', o.json);
+  const r = o.check ? checkDelivery(o.out ?? file) : packageDelivery(file, {out:o.out,mode:o.mode});
+  return printOperational(o, r);
+}
+
+function projectSpace(input, o = {}) {
+  const file = resolveProject(input), data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const formats = list(o.format) ?? data.formats ?? ['landscape'];
+  const duration = o.range ? o.range.to - o.range.from : data.duration ?? check(file, {}).report.timelines?.[0]?.seconds;
+  const native = findRenderer();
+  const streaming = isFilm(file) && !data.engine && o.renderer !== 'chrome' && data.renderer !== 'chrome' && !native.missing;
+  const results = formats.map(format => {
+    const dims = FILM_FORMATS[format]; if (!dims) throw new Error(`unknown format: ${format}`);
+    return {format,...storagePreflight({path:o.out ?? path.join(path.dirname(file),'out'),width:dims[0],height:dims[1],fps:data.fps ?? 30,duration,streaming:data.engine ? Boolean(data.engine.stream) : streaming})};
+  });
+  return {ok:results.every(r=>r.ok), estimates:results, note:'Estimates are advisory; formats/languages run sequentially. Batch manifests reserve concurrent tasks separately.'};
+}
+
+async function preflightCmd(o, [input, ...extra]) {
+  if (extra.length) return fail('preflight [film] [--format landscape] [--out output-directory]',o.json);
+  return printOperational(o,projectSpace(input,o));
+}
+
+async function cleanCmd(o, [action, input, ...extra]) {
+  if (!['plan','apply'].includes(action) || extra.length) return fail('clean plan [film] [--out render-directory] [--manifest new-plan.json]; clean apply plan.json --out render-directory',o.json);
+  const out = o.out ?? (action === 'plan' && input ? path.join(path.dirname(resolveProject(input)),'out') : undefined);
+  const options = {out,cacheHome:o['cache-home']};
+  if (action === 'plan') {
+    const r=planCacheCleanup(options);
+    if (o.manifest) fs.writeFileSync(path.resolve(o.manifest),JSON.stringify(r,null,2)+'\n',{flag:'wx'});
+    return printOperational(o,{ok:true,...r,...(o.manifest?{manifest:path.resolve(o.manifest)}:{})});
+  }
+  if (!input) return fail('clean apply requires a saved plan JSON',o.json);
+  const plan=JSON.parse(fs.readFileSync(input,'utf8'));
+  return printOperational(o,applyCacheCleanup(plan,{...options,dryRun:Boolean(o["dry-run"])}));
+}
+
+async function statsCmd(o, [input, ...extra]) {
+  if(extra.length) return fail('stats [film|events.jsonl]',o.json);
+  const target=input?.endsWith('.jsonl')?path.resolve(input):path.join(path.dirname(resolveProject(input)),'.motion-use','events.jsonl');
+  return printOperational(o,{ok:true,file:target,...aggregateJournal(target)});
+}
+
+async function teachingCmd(o, [input, ...extra]) {
+  if(extra.length) return fail('teaching [film] [--plan] [--states project-relative-samples.json]',o.json);
+  const r=await checkTeachingFile(resolveProject(input),{samplesFile:o.states,plan:Boolean(o.plan)});
+  // A plan is an inspection artifact, not an assertion pass.
+  if (o.plan) { console.log(JSON.stringify(r,null,2)); return 0; }
+  return printOperational(o,r);
 }

@@ -338,7 +338,9 @@ test("retime reads the actual recording extension and aligns every boundary to w
   assert.equal(r.duration, Math.ceil((1.25 + 0.56) * 30) / 30);
   assert.equal(JSON.parse(fs.readFileSync(p.file)).duration, 6);
   assert.equal(JSON.parse(fs.readFileSync(r.film)).brief.length, 6);
-  assert.throws(() => retimeFilm(p.file), /already exists/);
+  const second = retimeFilm(p.file);
+  assert.notEqual(second.film, r.film);
+  assert.throws(() => retimeFilm(p.file, { out: r.film }), /already exists/);
 });
 
 test("concat verifies the whole joined cut and writes a master whose manifest verifies by hash", () => {

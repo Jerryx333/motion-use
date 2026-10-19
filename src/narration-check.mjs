@@ -123,6 +123,21 @@ export function chineseNumber(s) {
   return total + section + num;
 }
 
+export const COMPARATOR_VERSION = "2";
+
+// Keep quantities, operations and negation separate. A recognizer's "56" is never
+// interpreted as "5 是 6", and homophone tolerance cannot erase a minus or a 不.
+export function mathSignature(text, lang) {
+  // Preserve ASCII arithmetic without treating acronym hyphens (A-A-I) as minus.
+  const s = text.normalize("NFKC").toLowerCase()
+    .replace(/([0-9零〇一二两三四五六七八九十百千万亿])\s*([-*/])\s*(?=[0-9零〇一二两三四五六七八九十百千万亿])/g,
+      (_, left, op) => left + ({ "-": "减", "*": "乘", "/": "除" })[op])
+    .replace(/(^|[=:(，。,：])\s*-\s*(?=\d)/g, "$1负");
+  const tokens = s.match(/[零〇一二两三四五六七八九十百千万亿]+|\d+(?:\.\d+)?|负|加|减|乘|除|等于|不是|不|没|无|未|别|[+−×÷=]|\b(?:not|no|never|without)\b/g) ?? [];
+  const ops = { 加: "+", 减: "-", "−": "-", 乘: "*", "×": "*", 除: "/", "÷": "/", 等于: "=", 不是: "不", 没: "不", 无: "不", 未: "不", 别: "不" };
+  return tokens.map((t) => CN_NUMBER.test(t) ? `n:${chineseNumber(t)}` : /^\d/.test(t) ? `n:${Number(t)}` : ops[t] ?? t);
+}
+
 /**
  * Compare a script line with what speech recognition heard.
  * `lexicon.chars` maps CJK characters to their toneless readings and `lexicon.phrases` lists
@@ -218,6 +233,10 @@ export function compareNarration(script, heard, lang, { chars = {}, tones = {}, 
   // Edit cost per changed run; a spelled-out acronym costs nothing.
   const cost = changes.reduce((s, c) => s + c.cost, 0);
   for (const c of changes) delete c.cost;
+  const expectedMath = mathSignature(script, lang), heardMath = mathSignature(heard, lang);
+  if (JSON.stringify(expectedMath) !== JSON.stringify(heardMath)) {
+    changes.push({ expected: expectedMath.join(" "), heard: heardMath.join(" "), kind: "math", flag: true });
+  }
   const similarity = +Math.max(0, 1 - cost / Math.max(A.length, 1)).toFixed(3);
   return {
     similarity,
@@ -249,40 +268,147 @@ const CACHE = ".motion-use-asr.json";
  * Transcribe (cached by clip hash and model) and compare every narration clip.
  * Never throws for a missing recognizer: returns { skipped: "<why>" } so render can go on.
  */
-export function checkNarration(items, { model = process.env.MOTION_USE_ASR_MODEL || "small", dir, log = () => {}, run = runAsr, force = false } = {}) {
-  if (!items.length) return { ok: true, lines: [], skipped: "no generated narration with a script" };
-  const cacheFile = dir ? path.join(dir, CACHE) : null;
-  let cache = {};
-  try {
-    cache = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-  } catch {}
-  const key = (it) => (dir ? path.relative(dir, it.file) : it.file);
-  const todo = items.filter((it) => {
-    const rec = cache[key(it)];
-    return force || !(rec && rec.sha === sha(it.file) && rec.model === model && rec.chars);
-  });
-  if (todo.length) {
-    log(`narration check: transcribing ${todo.length} clip(s) with whisper ${model}…`);
-    const res = run({ model, items: todo.map((it) => ({ file: it.file, lang: it.lang })), texts: items.map((it) => it.text) });
-    if (res.skipped) return { ok: true, lines: [], skipped: res.skipped };
-    for (const it of todo) {
-      const got = res.items.find((x) => x.file === it.file);
-      cache[key(it)] = { sha: sha(it.file), model, text: got?.text ?? "", chars: res.chars, tones: res.tones, phrases: res.phrases };
-    }
-    if (cacheFile)
-      try {
-        fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2) + "\n");
-      } catch {}
+/** Resolve once per command; persist the returned config in release records. */
+export function resolveNarrationCheckConfig(project = {}, overrides = {}, env = process.env) {
+  const object = (value, name) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
+    return value;
+  };
+  const supplied = Object.hasOwn(project, "narrationCheck") ? project.narrationCheck : project.narrationConfig?.check;
+  const cfg = supplied === undefined ? {} : object(supplied, "narrationCheck");
+  const allowedConfig = new Set(["model", "fallbackModel", "params"]);
+  for (const key of Object.keys(cfg)) if (!allowedConfig.has(key)) throw new Error(`unsupported narrationCheck option: ${key}`);
+  if (Object.hasOwn(cfg, "params")) object(cfg.params, "narrationCheck.params");
+  if (Object.hasOwn(overrides, "params")) object(overrides.params, "narrationCheck.params");
+  const out = {
+    model: overrides.model ?? cfg.model ?? env.MOTION_USE_ASR_MODEL ?? "small",
+    fallbackModel: overrides.fallbackModel ?? cfg.fallbackModel ?? null,
+    params: { beam_size: 5, vad_filter: false, condition_on_previous_text: false, ...(cfg.params ?? {}), ...(overrides.params ?? {}) },
+    comparatorVersion: COMPARATOR_VERSION,
+  };
+  for (const key of ["model", "fallbackModel"]) if (out[key] !== null && (typeof out[key] !== "string" || !out[key].trim())) throw new Error(`narrationCheck.${key} must be a nonempty model name`);
+  const allowed = new Set(["beam_size", "vad_filter", "condition_on_previous_text", "temperature"]);
+  for (const [key, value] of Object.entries(out.params)) {
+    if (!allowed.has(key)) throw new Error(`unsupported narrationCheck parameter: ${key}`);
+    if (key === "beam_size" && (!Number.isInteger(value) || value < 1 || value > 20)) throw new Error("narrationCheck beam_size must be 1..20");
+    if (["vad_filter", "condition_on_previous_text"].includes(key) && typeof value !== "boolean") throw new Error(`narrationCheck ${key} must be boolean`);
+    if (key === "temperature" && (!Number.isFinite(value) || value < 0 || value > 1)) throw new Error("narrationCheck temperature must be 0..1");
   }
-  const lines = items.map((it) => {
-    const rec = cache[key(it)];
-    const r = compareNarration(it.text, rec.text, it.lang, { chars: rec.chars, tones: rec.tones, phrases: rec.phrases });
-    const audioSha = sha(it.file), review = it.review;
-    const reviewed = review?.sha256 === audioSha && review.script === it.text && review.heard === rec.text && typeof review.reason === "string" && review.reason.trim();
-    return { id: it.id, lang: it.lang, script: it.text, heard: rec.text, audio_sha256: audioSha, ...r,
-      ...(reviewed ? { comparison_flagged: r.flagged, flagged: false, reviewed: { reason: review.reason, sha256: audioSha } } : {}) };
+  return out;
+}
+const stable = (value) => JSON.stringify(value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, JSON.parse(stable(value[k]))])) : value);
+export function asrCacheKey(audioSha, model, lang, params) {
+  return crypto.createHash("sha256").update(stable({ audioSha, model, lang, params })).digest("hex");
+}
+
+export function checkNarration(items, options = {}) {
+  const { dir, log = () => {}, run = runAsr, force = false } = options;
+  const config = resolveNarrationCheckConfig({}, options);
+  const { model, fallbackModel, params } = config;
+  const cacheStats = { hits: 0, misses: 0 };
+  // ok retains legacy compatibility; status is the authoritative release-policy input.
+  if (!items.length) return { ok: true, status: "SKIPPED", human_review: "UNREVIEWED", lines: [], config, cache: cacheStats, skipped: "no generated narration with a script" };
+  const cacheFile = dir ? path.join(dir, CACHE) : null;
+  let cache = { schemaVersion: 2, records: {} };
+  try {
+    const old = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    if (old.schemaVersion === 2 && old.records) cache = old;
+    // Legacy keys omit language and decoding parameters. Keep their evidence without
+    // trusting them as a hit under the stronger cache contract.
+    else cache.legacy = old;
+  } catch {}
+  const hashes = new Map(items.map((it) => [it.file, sha(it.file)]));
+  const key = (it, selected) => asrCacheKey(hashes.get(it.file), selected, it.lang, params);
+  const missingTranscripts = new Set(), writtenKeys = new Set();
+  const persist = () => {
+    if (!cacheFile) return;
+    // Only hold the lock for the merge + rename, never while running Whisper.
+    // A second command may have filled other keys since our initial cache read.
+    const lockFile = `${cacheFile}.lock`, token = crypto.randomUUID();
+    const until = Date.now() + 5000;
+    let fd;
+    while (fd === undefined) {
+      try { fd = fs.openSync(lockFile, "wx"); }
+      catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (Date.now() >= until) throw new Error(`ASR cache busy: ${lockFile}; check for an active writer before removing a stale lock`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+    }
+    const tempFile = `${cacheFile}.${token}.tmp`;
+    try {
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, token }));
+      let latest;
+      try { latest = JSON.parse(fs.readFileSync(cacheFile, "utf8")); } catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; }
+      const merged = { ...cache, records: { ...(latest?.schemaVersion === 2 ? latest.records : {}), ...cache.records } };
+      // Merge only keys produced by this invocation over the latest cache. Our
+      // initial snapshot must not overwrite another process's forced refresh.
+      for (const [key, rec] of Object.entries(latest?.schemaVersion === 2 ? latest.records : {})) {
+        if (!writtenKeys.has(key)) merged.records[key] = rec;
+      }
+      fs.writeFileSync(tempFile, JSON.stringify(merged, null, 2) + "\n");
+      fs.renameSync(tempFile, cacheFile);
+      cache = merged;
+      writtenKeys.clear();
+    } finally {
+      fs.closeSync(fd);
+      fs.rmSync(tempFile, { force: true });
+      fs.rmSync(lockFile, { force: true });
+    }
+  };
+  const transcribe = (subset, selected) => {
+    const todo = subset.filter((it) => {
+      const miss = force || !cache.records[key(it, selected)];
+      cacheStats[miss ? "misses" : "hits"]++;
+      return miss;
+    });
+    if (!todo.length) return null;
+    log(`narration check: transcribing ${todo.length} clip(s) with whisper ${selected}…`);
+    const res = run({ model: selected, params, items: todo.map((it) => ({ file: it.file, lang: it.lang })), texts: items.map((it) => it.text) });
+    if (res.skipped) return res.skipped;
+    for (const it of todo) {
+      const got = res.items?.find((x) => x.file === it.file);
+      if (!got || typeof got.text !== "string") { missingTranscripts.add(key(it, selected)); continue; }
+      writtenKeys.add(key(it, selected));
+      cache.records[key(it, selected)] = { sha: hashes.get(it.file), model: selected, lang: it.lang, params, text: got.text, chars: res.chars ?? {}, tones: res.tones ?? {}, phrases: res.phrases ?? [], created_at: new Date().toISOString() };
+    }
+    persist();
+    return null;
+  };
+  const primarySkipped = transcribe(items, model);
+  if (primarySkipped) return { ok: true, status: "SKIPPED", human_review: "UNREVIEWED", lines: [], model, config, cache: cacheStats, skipped: primarySkipped };
+  const compare = (it, selected) => {
+    const rec = cache.records[key(it, selected)];
+    if (!rec || missingTranscripts.has(key(it, selected))) return { model: selected, status: "UNREVIEWED", flagged: true, heard: "", similarity: 0, changes: [], reason: "recognizer returned no transcript for this clip" };
+    const r = compareNarration(it.text, rec.text, it.lang, rec);
+    return { model: selected, heard: rec.text, ...r, status: r.flagged ? "FAIL" : "PASS", cache_key: key(it, selected) };
+  };
+  const primary = items.map((it) => compare(it, model));
+  const flagged = items.filter((it, i) => primary[i].flagged);
+  const fallbackSkipped = fallbackModel && fallbackModel !== model && flagged.length ? transcribe(flagged, fallbackModel) : null;
+  const lines = items.map((it, i) => {
+    const attempts = [primary[i]];
+    if (fallbackModel && fallbackModel !== model && primary[i].flagged) attempts.push(fallbackSkipped ? { model: fallbackModel, status: "SKIPPED", skipped: fallbackSkipped } : compare(it, fallbackModel));
+    const selected = attempts.at(-1).status === "SKIPPED" ? primary[i] : attempts.at(-1);
+    const audioSha = hashes.get(it.file), review = it.review;
+    const reviewed = review?.sha256 === audioSha && review.script === it.text && review.heard === selected.heard && typeof review.reason === "string" && review.reason.trim();
+    return { id: it.id, lang: it.lang, script: it.text, file: it.file, audio_sha256: audioSha, ...selected, attempts, human_review: reviewed ? "PASS" : "UNREVIEWED",
+      ...(reviewed ? { status: "PASS", comparison_flagged: selected.flagged, flagged: false, reviewed: { reason: review.reason, sha256: audioSha } } : {}) };
   });
-  return { ok: !lines.some((l) => l.flagged), model, lines };
+  const status = lines.some((l) => l.status === "FAIL") ? "FAIL" : lines.some((l) => l.status === "UNREVIEWED") ? "UNREVIEWED" : "PASS";
+  return { ok: status === "PASS", status, human_review: lines.every((l) => l.human_review === "PASS") ? "PASS" : "UNREVIEWED", model, config, cache: cacheStats, lines };
+}
+
+/** Standalone static review; audio links and all text remain usable without JavaScript. */
+export function writeNarrationReview(check, file) {
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const rows = check.lines.map((line) => {
+    const audio = path.relative(path.dirname(path.resolve(file)), path.resolve(line.file)).split(path.sep).map(encodeURIComponent).join("/");
+    return `<article><h2>${esc(line.lang)}/${esc(line.id)} — ${esc(line.status)}</h2><p>Human review: ${esc(line.human_review)}</p><p>Script: ${esc(line.script)}</p><audio controls src="${esc(audio)}"></audio>${line.attempts.map((a) => `<h3>${esc(a.model)} — ${esc(a.status)}</h3><p>${esc(a.heard ?? a.skipped)}</p><pre>${esc(JSON.stringify(a.changes ?? [], null, 2))}</pre>`).join("")}</article>`;
+  }).join("\n");
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Narration review</title><style>body{max-width:900px;margin:2rem auto;padding:1rem;font:18px system-ui}article{border-top:1px solid #aaa;padding:1rem 0}pre{white-space:pre-wrap}audio{width:100%}</style><h1>Narration ${esc(check.status)}</h1><p>Human review: ${esc(check.human_review)}. Automatic transcription does not establish listening approval.</p>${check.skipped ? `<p>${esc(check.skipped)}</p>` : ""}${rows}</html>`);
+  return file;
 }
 
 /** Run scripts/asr.py through uv. Returns { skipped } when uv or the model is unavailable. */
@@ -308,6 +434,7 @@ const FIX = {
   acronym: 'spell the letters apart in the script, e.g. "A I" (subtitles may keep "AI")',
   latin: "check how the voice reads this word; respell it the way it should sound",
   polyphone: "the voice read a many-reading character the other way; use a word with one reading (重试 → 再试)",
+  math: "quantity, operator or negation differs: listen; never dismiss a mathematical change as spelling",
   number: "the clip says a different number; listen and fix the script or re-voice it",
   tone: "same syllable, different tone: listen; if the voice is wrong, respell or use another word",
   near: "a neighbouring sound (often the recognizer on a name): listen before re-voicing",
