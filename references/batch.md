@@ -99,3 +99,5 @@ separated unless it is explicitly measured. Phase durations are reported
 separately. Unmeasured waiting, cost and video duration stay null.
 The journal records execution and cache reuse; it does not claim mathematical,
 visual, listening, or target-device acceptance.
+
+`motion-use stats tasks.json` locates the manifest's shared journal directly, without rehashing outputs or running tasks. `--state-file` selects the same override used for the batch. Project-local journals are not duplicated for batch children.

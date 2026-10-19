@@ -276,3 +276,8 @@ export async function runBatch(manifestPath, options = {}) {
     unlock();
   }
 }
+
+/** Locate a batch journal without executing commands or rehashing completed outputs. */
+export function batchJournalPath(manifestPath, options = {}) {
+  return path.join(path.dirname(load(manifestPath, { ...options, allowExec: true }).stateFile), "events.jsonl");
+}

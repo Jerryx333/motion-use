@@ -142,3 +142,16 @@ test("CLI delivery --check without a package path fails with usage", t => {
   assert.equal(r.json.ok, false);
   assert.match(r.json.error, /delivery --check --out/);
 });
+
+test("CLI stats locates a batch journal without executing tasks or hashing removed outputs", t => {
+  const {dir,cli}=fixture(t);
+  fs.writeFileSync(path.join(dir,'input.txt'),'source');
+  fs.writeFileSync(path.join(dir,'tasks.json'),JSON.stringify({schemaVersion:1,tasks:[{id:'prepare',executable:process.execPath,command:['-e',"require('fs').writeFileSync('output.txt','generated')"],inputs:['input.txt'],outputs:['output.txt']}]}));
+  const run=cli('batch','run','tasks.json','--allow-exec'); assert.equal(run.status,0,run.stdout+run.stderr);
+  fs.unlinkSync(path.join(dir,'output.txt'));
+  const stats=cli('stats','tasks.json'); assert.equal(stats.status,0,stats.stdout+stats.stderr);
+  assert.match(stats.json.file,/events.jsonl$/);
+  assert.ok(stats.json.active_processing_s>=0);
+  assert.equal(stats.json.waiting_s,null); assert.equal(stats.json.cost,null);
+  assert.equal(fs.existsSync(path.join(dir,'output.txt')),false,'stats must not re-execute a missing-output task');
+});

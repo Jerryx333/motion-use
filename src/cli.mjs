@@ -2,7 +2,7 @@ import { projectTarget, listProjects } from "./projects.mjs";
 import { acquireOutputLock } from "./output-lock.mjs";
 import { createProgress } from "./progress.mjs";
 import { createJournal, aggregateJournal } from "./journal.mjs";
-import { runBatch, planBatch, readBatchStatus } from "./batch.mjs";
+import { runBatch, planBatch, readBatchStatus, batchJournalPath } from "./batch.mjs";
 import { packageDelivery, checkDelivery } from "./delivery.mjs";
 import { diskSpace, storagePreflight, planCacheCleanup, applyCacheCleanup } from "./storage.mjs";
 import { checkTeachingFile } from "./teaching.mjs";
@@ -82,7 +82,7 @@ Usage: motion-use <command> [options]
   delivery <delivery.json> --out <fresh-dir>  Portable videos/offline/site packages; --check verifies a package
   preflight [film]     Observe free disk and estimate render storage before starting
   clean plan|apply     Preview owned rebuildable caches; apply a frozen plan (see references/storage.md)
-  stats [film|events.jsonl]  Aggregate persisted processing/wall time; unmeasured values remain null
+  stats [film|tasks.json|events.jsonl]  Aggregate persisted processing/wall time; unmeasured values remain null
   teaching [film]      Check authored teaching state (--plan lists continuous sample times; --states JSON)
   list                List projects under ~/motion-use (override: MOTION_USE_PROJECTS)
   init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
@@ -2417,8 +2417,13 @@ async function cleanCmd(o, [action, input, ...extra]) {
 }
 
 async function statsCmd(o, [input, ...extra]) {
-  if(extra.length) return fail('stats [film|events.jsonl]',o.json);
-  const target=input?.endsWith('.jsonl')?path.resolve(input):path.join(path.dirname(resolveProject(input)),'.motion-use','events.jsonl');
+  if(extra.length) return fail('stats [film|tasks.json|events.jsonl]',o.json);
+  let target;
+  if (input?.endsWith('.jsonl')) target=path.resolve(input);
+  else {
+    const file=resolveProject(input), data=JSON.parse(fs.readFileSync(file,'utf8'));
+    target=Array.isArray(data.tasks) ? batchJournalPath(file,{stateFile:o['state-file']}) : path.join(path.dirname(file),'.motion-use','events.jsonl');
+  }
   return printOperational(o,{ok:true,file:target,...aggregateJournal(target)});
 }
 
