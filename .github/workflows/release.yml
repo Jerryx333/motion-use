@@ -2,24 +2,52 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to retry publishing
+        required: true
+        type: string
 permissions:
   contents: write
+concurrency:
+  group: publish-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 jobs:
   native:
     uses: ./.github/workflows/native.yml
+    with:
+      ref: ${{ inputs.ref || inputs.tag || github.ref }}
   release:
     needs: native
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || inputs.tag || github.ref }}
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: tag matches package.json and plugin.json
         run: |
-          test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
-          test "v$(node -p 'require("./.claude-plugin/plugin.json").version')" = "$GITHUB_REF_NAME"
-          grep -q "^version = \"${GITHUB_REF_NAME#v}\"" native/motion-render/Cargo.toml
+          test "v$(node -p 'require("./package.json").version')" = "$RELEASE_TAG"
+          test "v$(node -p 'require("./.claude-plugin/plugin.json").version')" = "$RELEASE_TAG"
+          grep -q "^version = \"${RELEASE_TAG#v}\"" native/motion-render/Cargo.toml
+      - name: Verify immutable tag target
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
       - name: ffmpeg (the media tests probe and cut real files)
         run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
       - run: npm ci --ignore-scripts
@@ -40,4 +68,17 @@ jobs:
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/motion-use-v*.tar.gz dist/motion-use-v*.tar.gz.sha256 dist/motion-render-v*.tar.gz dist/motion-render-v*.tar.gz.sha256 --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          assets=(dist/motion-use-v*.tar.gz dist/motion-use-v*.tar.gz.sha256 dist/motion-render-v*.tar.gz dist/motion-render-v*.tar.gz.sha256)
+          test "${#assets[@]}" -eq 10
+          (cd dist && sha256sum -c ./*.sha256)
+          if gh release view "$RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/release.json"; then
+            if test "$(node -p "require(process.env.RUNNER_TEMP + '/release.json').isDraft")" = false; then
+              echo "Release $RELEASE_TAG is already public; leaving its immutable assets unchanged"
+              exit 0
+            fi
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest
