@@ -219,7 +219,7 @@ async function teachingInputFingerprint(rawFilm, filmFile, dir) {
   const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
   const sources = filmInputs(film, filmFile).filter((entry) => entry.role !== 'film' && entry.role !== 'teaching-state');
   if (film.scoreFile) sources.push({ role: 'music-score', file: film.scoreFile });
-  const files = [{ role: 'film', path: path.relative(dir, filmFile), sha256: sha(JSON.stringify(canonical)) }];
+  const files = [{ role: 'film', path: path.relative(dir, fs.realpathSync(filmFile)), sha256: sha(JSON.stringify(canonical)) }];
   const bundledEffects = new Set((film.tracks ?? []).filter((track) =>
     typeof track.effect === 'string' && /^[a-z][a-z-]*$/.test(track.effect) &&
     path.resolve(track.file) === path.join(BUNDLE_ROOT, 'assets', 'sfx', track.effect + '.wav')

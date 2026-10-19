@@ -710,7 +710,7 @@ async function render(o, [briefPath]) {
     }
     if (!o.json)
       console.error(`restored snapshot ${found.record.id} (${found.record.created}); output goes to ${path.join(out, `snapshot-${found.record.id}`)}`);
-    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, "no-asr": found.record.renderOptions?.noAsr ?? o["no-asr"], "allow-asr-skip": found.record.renderOptions?.asrWaiver ?? o["allow-asr-skip"], _frozenNarrationCheck: found.record.renderOptions?.narrationCheck, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
+    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, "no-asr": found.record.renderOptions?.noAsr ?? o["no-asr"], "allow-asr-skip": found.record.renderOptions?.asrWaiver ?? o["allow-asr-skip"], _frozenNarrationCheck: found.record.renderOptions?.narrationCheck, states: found.record.renderOptions?.teachingSamples ?? undefined, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
   }
   if (o.release) {
     if (o["max-size"] || o.target)
@@ -769,9 +769,6 @@ async function render(o, [briefPath]) {
     }
     o._storage = projectSpace(briefPath, o);
     if (!o._storage.ok && !o.json) console.error("warning: estimated render storage exceeds current free space; see preflight --json for assumptions");
-    o._teaching = await checkTeachingFile(resolveProject(briefPath), { samplesFile: o.states });
-    if ((o.release || o.gate) && ["FAIL", "UNREVIEWED"].includes(o._teaching.status) && c.film.teaching?.assertions?.length)
-      return printOperational(o, {ok:false,error:"teaching assertions require complete passing author-state samples; inspect teaching --plan and teaching --states",teaching:o._teaching});
     o._progress?.("narration", "start");
     const generated = o.range ? { rows: [] } : await generateFilmNarration(c.film, {
       langs: c.langs,
@@ -874,6 +871,13 @@ async function render(o, [briefPath]) {
     if ((o.release || o.gate) && narrationCheck.required && ["SKIPPED", "UNREVIEWED"].includes(narrationCheck.status) && !narrationCheck.waiver)
       return rejectNarration(`narration check ${narrationCheck.status}: ${narrationCheck.skipped ?? "incomplete transcription"}; restore ASR or pass --allow-asr-skip with a reviewable reason`);
   }
+  // Bind teaching evidence after speech generation, so new audio cannot leave an old
+  // author-state binding looking current. This remains separate from pixel review.
+  if (isFilm(briefPath)) {
+    o._teaching = await checkTeachingFile(resolveProject(briefPath), { samplesFile: o.states });
+    if ((o.release || o.gate) && ["FAIL", "UNREVIEWED"].includes(o._teaching.status) && o._teaching.assertions?.length)
+      return printOperational(o, {ok:false,error:"teaching assertions require complete passing author-state samples; inspect teaching --plan and teaching --states",teaching:o._teaching});
+  }
   // Snapshot: the exact inputs of this render, so the cut can be rebuilt later.
   let snapshot = o._snapshot ?? null,
     filmFile = null;
@@ -882,8 +886,9 @@ async function render(o, [briefPath]) {
     if (!snapshot) {
       const c = checkFilm(briefPath, { ...o });
       const outDir = path.resolve(o.out ?? path.join(path.dirname(filmFile), "out"));
+      if (o._teaching?.sampleSource?.file) c.film.teaching = { ...c.film.teaching, samples: o._teaching.sampleSource.file };
       try {
-        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), noAsr: Boolean(o["no-asr"]), asrWaiver: o["allow-asr-skip"] ?? null, narrationCheck: narrationCheck?.config ?? null } }).id;
+        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), noAsr: Boolean(o["no-asr"]), asrWaiver: o["allow-asr-skip"] ?? null, narrationCheck: narrationCheck?.config ?? null, teachingSamples: o._teaching?.sampleSource?.file ?? null } }).id;
       } catch (e) {
         if (!o.json) console.error(`warning: snapshot not saved: ${e.message}`);
       }
