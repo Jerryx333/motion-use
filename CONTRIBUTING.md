@@ -33,4 +33,10 @@ npm run lint && npm test
 
 ## Releasing (maintainers)
 
-Bump `version` in `package.json`, the root entry in `package-lock.json`, `.claude-plugin/plugin.json`, `native/motion-render/Cargo.toml` and the motion-render entry in `native/Cargo.lock`, then push a tag `vX.Y.Z`. The release workflow packages the archive, checks that it installs, and attaches it and its `.sha256` to the GitHub Release.
+Merging to `main` now releases automatically after the exact main commit passes CI. `Automatic release` prepares the version and tag, then directly calls the existing four-platform build/test/package/install/publish workflow. Only `GITHUB_TOKEN` is required; no npm publication or personal token.
+
+An already prepared version above the last reachable stable tag is retained. Otherwise Conventional Commits select major for breaking changes, minor for `feat`, and patch by default (including documentation/maintenance merges). All five version files are updated together by a bot commit. That commit and the immutable tag are pushed atomically without force. A newer main head causes an older CI completion to skip; the newer commit's CI will release it. Published tags are never moved.
+
+Bot pushes do not start another push workflow. The reusable release call is intentional and prevents a silent missing release or recursive bump loop. Release builds check out the exact prepared SHA, including the native matrix, and verify it matches the tag.
+
+To retry a failed publication without incrementing the version, dispatch `Release` with its existing `vX.Y.Z` tag. `Automatic release` can also be dispatched on main when that exact source has a successful main CI run. Manual stable tag pushes remain supported. Inspect all release assets and SHA256 checksums before claiming artifact acceptance.

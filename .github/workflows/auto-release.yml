@@ -1,0 +1,55 @@
+name: Automatic release
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: automatic-release-main
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.prepare.outputs.ready }}
+      ref: ${{ steps.prepare.outputs.ref }}
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify main CI passed for this exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tested=$(git rev-parse HEAD)
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --commit "$tested" --event push --status success --limit 100 --json databaseId --jq length)
+          test "$passed" -gt 0
+      - name: Prepare version and tag atomically
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          git fetch origin main --tags
+          node scripts/prepare-auto-release.mjs --publish
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+      tag: ${{ needs.prepare.outputs.tag }}
