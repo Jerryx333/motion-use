@@ -74,7 +74,7 @@ export function readReleaseManifest(dir) {
  * Add or replace entries in out/release/release-manifest.json. Entries whose file is gone or
  * no longer matches its hash are dropped, so the manifest only ever lists deliverable files.
  */
-export function writeReleaseManifest(dir, { entries, snapshot, version, film }) {
+export function writeReleaseManifest(dir, { entries, snapshot, version, film, narrationCheck }) {
   const old = readReleaseManifest(dir);
   const keep = (old?.files ?? []).filter(
     (e) => !entries.some((n) => n.file === e.file) && fs.existsSync(path.join(dir, e.file)) && sha(path.join(dir, e.file)) === e.sha256,
@@ -84,6 +84,7 @@ export function writeReleaseManifest(dir, { entries, snapshot, version, film }) 
     created: new Date().toISOString(),
     film,
     snapshot,
+    ...(narrationCheck ? { narration_check: narrationCheck } : {}),
     files: [...keep, ...entries].sort((a, b) => a.file.localeCompare(b.file)),
   };
   fs.writeFileSync(path.join(dir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n");

@@ -11,7 +11,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
 const name = `motion-use-v${pkg.version}`;
 const dist = path.join(root, "dist");
 const stage = path.join(dist, name);
-const SKIP = new Set(["out", "node_modules", ".DS_Store", "dist", ".env"]);
+const SKIP = new Set(["out", "node_modules", ".DS_Store", "dist", ".env", ".motion-use", ".motion-use-asr.json", ".motion-use-asr.json.lock"]);
 
 fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(stage, { recursive: true });

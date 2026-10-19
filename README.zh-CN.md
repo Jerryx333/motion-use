@@ -173,3 +173,5 @@ still/render 会立即报错。子命令支持 `--help`。
 旁白可分开 `say/text`，字幕可按句、镜头或原始 cue 分组。素材支持无损图片序列、
 镜头相对时间及首尾帧停留。报告增加逐镜头运动诊断，选定静帧只检查附近的文字。
 接口细节见[影片契约](references/film.md)。
+
+批量课程制作：[任务恢复、旁白审核、章节与交付流程](references/course-workflow.md)。

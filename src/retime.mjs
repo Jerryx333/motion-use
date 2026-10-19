@@ -8,7 +8,7 @@ import { audioSeconds } from "./build.mjs";
 export function retimeFilm(input, { out } = {}) {
   const file = resolveProject(input),
     dir = path.dirname(file);
-  const checked = checkFilm(file, { skipGeneratedVoiceover: true });
+  const checked = checkFilm(file, { skipGeneratedVoiceover: true, phase: "narration" });
   if (!checked.ok)
     throw new Error(
       checked.report.errors.map((e) => `${e.path}: ${e.message}`).join("\n"),
@@ -83,14 +83,18 @@ export function retimeFilm(input, { out } = {}) {
     throw new Error(
       `Retimed film is ${data.duration}s; split into parts and use concat (single-film limit 180s)`,
     );
-  const target = path.resolve(out ?? path.join(dir, "film.retimed.json"));
+  let target = path.resolve(out ?? path.join(dir, "film.retimed.json"));
+  // Each default proposal gets a new filename; a failed iteration cannot advertise the old one.
+  if (out === undefined) {
+    for (let n = 2; fs.existsSync(target); n++) target = path.join(dir, `film.retimed-${n}.json`);
+  }
   if (path.dirname(target) !== dir)
     throw new Error(
       "Keep the retimed JSON beside film.json so declared paths remain valid",
     );
   if (fs.existsSync(target))
-    throw new Error(`${target} already exists; choose a fresh --out`);
-  const validation = validateFilm(data, dir).errors.map(
+    throw new Error(`${target} already exists; it may contain an old timeline. Do not use it as this command's result; omit --out for a fresh proposal or choose a fresh --out`);
+  const validation = validateFilm(data, dir, { phase: "retime" }).errors.map(
     (e) => `${e.path}: ${e.message}`,
   );
   if (validation.length) throw new Error(validation.join("\n"));
@@ -100,6 +104,8 @@ export function retimeFilm(input, { out } = {}) {
   return {
     ok: true,
     film: target,
+    source: file,
+    validation_phase: "narration",
     duration: data.duration,
     changes,
     targetLength: data.brief?.length ?? null,

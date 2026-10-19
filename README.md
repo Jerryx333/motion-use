@@ -169,3 +169,5 @@ copy and sentence/shot/cue subtitle grouping. Footage accepts lossless numbered
 image sequences, shot-relative placement and first/last frame holds. Reports now
 include per-shot motion diagnostics; selected stills scope text checks to the
 requested time windows. See the [film contract](references/film.md).
+
+Batch course production: [workflow, recovery, narration review, chapters and delivery](references/course-workflow.md).

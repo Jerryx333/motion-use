@@ -31,6 +31,7 @@ const hashFile = (f) => {
 export function filmInputs(film, filmFile) {
   const list = [
     { role: "film", file: filmFile },
+    ...(film.teaching?.samples ? [{ role: "teaching-state", file: path.resolve(film.dir, film.teaching.samples) }] : []),
     { role: "composition", file: film.source },
     ...Object.values(film.fonts ?? {}).flatMap((font) => [{ role: "font", file: font.file }, { role: "font-license", file: font.license }]),
     ...(film.libraries ?? []).map((file) => ({ role: "composition", file })),

@@ -1,3 +1,5 @@
+import { resolveNarrationCheckConfig } from "./narration-check.mjs";
+import { validateTeaching } from "./teaching.mjs";
 import { projectInput } from "./projects.mjs";
 import { groupCaptions } from "./caption-plan.mjs";
 import { anchoredTime, sequenceFiles, buildFootage } from "./footage.mjs";
@@ -64,10 +66,22 @@ export function validateFilm(
     probe = audioSeconds,
     requireNarration = false,
     skipGeneratedVoiceover = false,
+    phase = "complete",
   } = {},
 ) {
   const errors = [],
     warnings = [];
+  if (!["complete", "narration", "retime"].includes(phase))
+    throw new Error("validation phase must be complete, narration or retime");
+  if (phase === "retime" && data && typeof data === "object") data = { ...data, music: "none" };
+  if (phase === "narration" && data && typeof data === "object" && !Array.isArray(data)) {
+    // Speech generation/retiming do not consume picture, score or sound effects.
+    // Project the input for this phase only; never write this projection back to film.json.
+    const deferred = ["composition", "libraries", "engine", "renderer", "assets", "files", "videos", "fonts", "provenance", "music", "teaching"];
+    data = { ...data, music: "none", audio: Array.isArray(data.audio) ? data.audio.filter(a => a?.role === "voiceover") : [] };
+    for (const key of deferred) if (key !== "music") delete data[key];
+    warnings.push({ path: "$", message: "narration phase: picture, music, SFX, fonts and teaching checks deferred; validate/render/release still require all inputs" });
+  }
   const error = (p, message) => errors.push({ path: p, message });
   const text = (v, p, max = 1000) => {
     if (typeof v !== "string" || !v.trim() || v.length > max)
@@ -76,6 +90,9 @@ export function validateFilm(
   };
   if (!data || typeof data !== "object" || Array.isArray(data))
     return { errors: [{ path: "$", message: "a film object" }], warnings };
+  try { resolveNarrationCheckConfig(data); } catch (e) { error("$.narrationCheck", e.message); }
+  const teaching = validateTeaching(data.teaching, { duration: data.duration });
+  errors.push(...teaching.errors); warnings.push(...teaching.warnings);
   if (data.version !== 1 || data.kind !== "film")
     error("$.kind", 'version: 1, kind: "film"');
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(data.name ?? ""))
@@ -238,7 +255,7 @@ export function validateFilm(
   if (data.renderer !== undefined && !["auto", "native", "chrome"].includes(data.renderer))
     error("$.renderer", '"auto" (default: native when motion-render is installed and the film draws no WebGL), "native" or "chrome"');
   const composition = engine && data.composition === undefined ? null : (data.composition ?? "composition/draw.js");
-  const source = composition === null ? null : local(composition, "$.composition");
+  const source = composition === null || phase === "narration" ? null : local(composition, "$.composition");
   const libraries = [];
   if (data.libraries !== undefined && !Array.isArray(data.libraries))
     error("$.libraries", "an array of local, bundled browser scripts");
@@ -886,7 +903,7 @@ export function filmWords(film, lang, voiceTracks) {
   const dir=film.narrationConfig?.dir, manifest=dir?readVoManifest(dir):{};
   return voiceTracks.flatMap((track)=>{
     const plan=film.narrationPlans?.find((p)=>p.id===track.id), rec=dir?manifest[path.relative(dir,track.file)]:null;
-    if((plan?.display?.[lang] && plan.display[lang] !== plan.narration[lang]) || !rec?.words || rec.text!==plan?.narration?.[lang] || rec.sha!==crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex")) return [];
+    if(!rec?.words || rec.text!==plan?.narration?.[lang] || rec.sha!==crypto.createHash("sha256").update(fs.readFileSync(track.file)).digest("hex")) return [];
     return rec.words.filter((w)=>Number.isFinite(w.start)&&Number.isFinite(w.end)&&w.start>=0&&w.end>w.start&&w.end<=track.length+.05)
       .map((w)=>({...w,id:track.id,start:track.start+w.start,end:track.start+Math.min(track.length,w.end),estimated:false}));
   }).sort((a,b)=>a.start-b.start);
