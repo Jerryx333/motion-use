@@ -47,6 +47,7 @@ import {
   resolveProject,
 } from "./film.mjs";
 import { normalizeAudio, verifyVideo, buildNarrationStem } from "./verify.mjs";
+import { auditionVoices } from "./voice-audition.mjs";
 import { generateFilmNarration } from "./film-voiceover.mjs";
 import { composeMusic, evaluateScore, isStarterScore, INSTALL_HINT } from "./compose.mjs";
 import { recordRelease } from "./music-index.mjs";
@@ -95,7 +96,8 @@ Usage: motion-use <command> [options]
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
                       --mode template keeps the scene-template workflow; --style/--story also select it
   validate [brief]    Check a brief: fields, files, voiceover lengths, characters the fonts cannot draw
-  voiceover [brief]   Speak each scene's "narration" into voiceover/<lang>/<scene-id>.mp3 (--engine azure|edge)
+  voiceover [brief]   Speak each scene's "narration" into voiceover/<lang>/<scene-id>.mp3 (--engine azure|edge|command)
+  voiceover audition <plan.json> --out <fresh-dir>  Compare same-script samples; listening remains UNREVIEWED
   voiceover check     Transcribe every narration clip (whisper via uv) and compare it with its script:
                       catches misread acronyms ("AI" as "A-A-I") and polyphones (重试 heard as 重视)
   still [brief]       Render keyframes as PNGs plus a contact sheet (--at 1.5,4 for exact seconds, --shot id,
@@ -312,7 +314,7 @@ export async function main(argv) {
   if (cmd !== "upgrade") await maybeNotify(VERSION);
   let unlock;
   let journalFile = args.values.journal ?? process.env.MOTION_USE_JOURNAL_FILE;
-  if (!journalFile && ["render", "still", "voiceover", "retime", "music", "validate", "teaching"].includes(cmd)) {
+  if (!journalFile && !(cmd === "voiceover" && args.positionals[0] === "audition") && ["render", "still", "voiceover", "retime", "music", "validate", "teaching"].includes(cmd)) {
     const projectArg = cmd === "voiceover" && args.positionals[0] === "check" ? args.positionals[1] : args.positionals[0];
     const project = resolveProject(projectArg);
     if (fs.existsSync(project)) journalFile = path.join(path.dirname(project), ".motion-use", "events.jsonl");
@@ -773,8 +775,8 @@ async function render(o, [briefPath]) {
     o.range = { from, to };
   }
   if (isFilm(briefPath)) {
-    if (o.engine && !["edge", "azure"].includes(o.engine))
-      return fail("--engine must be azure or edge", o.json);
+    if (o.engine && !["edge", "azure", "command"].includes(o.engine))
+      return fail("--engine must be azure, edge or command", o.json);
     if (!o["allow-code"])
       return fail(
         "this film executes authored drawing code; pass --allow-code only for a project you wrote or trust",
@@ -793,6 +795,7 @@ async function render(o, [briefPath]) {
     const generated = o.range ? { rows: [] } : await generateFilmNarration(c.film, {
       langs: c.langs,
       engine: o.engine,
+      allowCode: Boolean(o["allow-code"]),
       wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
     });
@@ -855,11 +858,12 @@ async function render(o, [briefPath]) {
           printReport({ errors: checked.errors, warnings: [], timelines: [] });
         return 1;
       }
-      if (o.engine && !["azure", "edge"].includes(o.engine))
-        return fail("--engine must be azure or edge", o.json);
+      if (o.engine && !["azure", "edge", "command"].includes(o.engine))
+        return fail("--engine must be azure, edge or command", o.json);
       const generated = await generateVoiceover(checked.brief, {
         langs: list(o.lang) ?? checked.brief.languages,
         engine: o.engine,
+        allowCode: Boolean(o["allow-code"]),
         log: o.json ? () => {} : (m) => console.error(m),
       });
       const failed = generated.rows.filter((r) => r.status === "error");
@@ -1572,6 +1576,13 @@ function fitSize(file, max, workDir) {
 
 async function voiceover(o, [briefPath, ...rest]) {
   if (briefPath === "check") return voiceoverCheck(o, rest);
+  if (briefPath === "audition") {
+    if (rest.length !== 1) return fail("voiceover audition <plan.json> --out <fresh-directory>", o.json);
+    const result = await auditionVoices(rest[0], o.out, { allowCode: Boolean(o["allow-code"]) });
+    if (o.json) console.log(JSON.stringify(result, null, 2));
+    else console.log(`${result.review}\n${result.ok ? "samples ready" : "some samples failed"}; listening UNREVIEWED; production narration unchanged`);
+    return result.ok ? 0 : 1;
+  }
   if (isFilm(briefPath)) {
     const c = checkFilm(briefPath, { ...o, skipGeneratedVoiceover: true, phase: "narration" });
     if (!c.ok) {
@@ -1580,12 +1591,13 @@ async function voiceover(o, [briefPath, ...rest]) {
       else printReport(c.report);
       return 1;
     }
-    if (o.engine && !["edge", "azure"].includes(o.engine))
-      return fail("--engine must be azure or edge", o.json);
+    if (o.engine && !["edge", "azure", "command"].includes(o.engine))
+      return fail("--engine must be azure, edge or command", o.json);
     o._progress?.("tts", "start");
     const res = await generateFilmNarration(c.film, {
       langs: c.langs,
       engine: o.engine,
+      allowCode: Boolean(o["allow-code"]),
       force: o.force,
       wordTiming: Boolean(o["word-timing"]),
       log: o.json ? () => {} : (m) => console.error(m),
@@ -1633,8 +1645,8 @@ async function voiceover(o, [briefPath, ...rest]) {
     else printReport({ errors, warnings, timelines: [] });
     return 1;
   }
-  if (o.engine && !["azure", "edge"].includes(o.engine))
-    return fail("--engine must be azure or edge", o.json);
+  if (o.engine && !["azure", "edge", "command"].includes(o.engine))
+    return fail("--engine must be azure, edge or command", o.json);
   const langs = list(o.lang) ?? brief.languages;
   if (!brief.scenes.some((s) => s.narration))
     return fail(
@@ -1644,6 +1656,7 @@ async function voiceover(o, [briefPath, ...rest]) {
   const res = await generateVoiceover(brief, {
     langs,
     engine: o.engine,
+    allowCode: Boolean(o["allow-code"]),
     force: o.force,
     log: o.json ? () => {} : (m) => console.error(m),
   });

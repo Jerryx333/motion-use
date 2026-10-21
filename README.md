@@ -4,6 +4,8 @@ English | [中文](README.zh-CN.md)
 
 Direct a film with your coding agent: plan the action, author exact-time animation, render locally, then inspect the delivered MP4. Chinese/English, landscape/portrait/square, local fonts and assets. Scene templates remain available for quick explainers.
 
+Cast the narrator before generating the full script: `voiceover audition <plan.json> --out <fresh-dir>` creates same-script samples and an offline listening page. A trusted `command` TTS bridge supports explicit external models and performance direction; model/settings changes invalidate generated audio. See [voice casting](references/voice-casting.md). ASR checks reading, not naturalness or suitability.
+
 Source footage and music as part of direction. New projects include `SOURCES.md`
 for shot needs, candidate comparisons, provider/licence records, frozen files and
 actual audition coverage. Use chrome-use's available read-only `site` adapters

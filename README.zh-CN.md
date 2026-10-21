@@ -48,6 +48,8 @@ motion-use concat parts.json --out ./joined --release  # 长片分段拼接，�
 
 交接包是可导入剪辑软件的素材与时间表，不是剪映原生草稿。代码动效仍需烘焙到画面；无字幕开关只控制 `M.captions`，自绘文字与素材内文字保留。草稿会留在 `out/preview/`，交付检查失败也能回看。
 
+旁白先选模型、声线和表达方式，再生成整片。`voiceover audition <plan.json> --out <新目录>` 用同稿生成候选和离线试听页；`command` 引擎可通过可信桥接脚本接入其他 TTS 模型，模型与表达要求参与缓存校验。ASR 检查读字，实际试听判断自然度与内容是否合适。[旁白选型流程](references/voice-casting.md)。
+
 找素材和背景音乐也属于制作流程。新项目的 `SOURCES.md` 记录镜头需求、候选比较、原站许可、下载后的文件和实际试听情况。可用 chrome-use 的只读 `site` 适配器搜索，再到原站检查预览和下载；没有专用适配器时，用 `google/search` 限定站点找候选。配乐可选现成曲目或自写 `score.js`，按旁白和画面试听后决定。[素材与音乐工作流](references/asset-sourcing.md)。
 
 ## 导演模式（默认）
@@ -152,7 +154,7 @@ motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片
 |---|---|
 | `init [dir]` | 默认创建导演模式项目；`--mode template` 选择模板 brief：`--style`、`--name`、`--lang zh,en`、`--format landscape,vertical` |
 | `validate [brief]` | 检查 brief、文件、旁白长度和字形覆盖；打印时间线 |
-| `voiceover [brief]` | 按场景的 `narration` 生成语音：`--engine azure`（有授权）或 `edge`（预览）；`voiceover check` 把旁白转成文字，标出读错的地方 |
+| `voiceover [brief]` | 按场景的 `narration` 生成语音：`azure`、`edge` 预览或 `command` 外部模型；`voiceover audition` 同稿试读，`voiceover check` 把旁白转成文字，标出读错的地方 |
 | `still [brief]` | 关键帧和联系表；`--at 1.5,4` 指定秒数，`--beats 4` 每小节一帧；`--onion 1.2-2` 把一段动作的若干帧叠成一张图，看间距判断缓动；绘制代码在帧之间留了状态时会警告 |
 | `render [brief]` | 每种语言 × 画幅一个 MP4，外加封面 PNG；`--quality draft\|standard\|high`、`--target github` / `--max-size 9MB`；`--release` 出平台母版和清单，`--snapshot <id>` 原样重渲染之前的版本，`--gate` 旁白被标出、文字出画或叠字时失败 |
 | `verify <mp4>` | 解码并测量交付的视频：检查帧、音频、运动指标；`--gate` 红灯时失败，`--loop` 检查循环接缝，`--manifest` 确认文件就是当前发布母版 |

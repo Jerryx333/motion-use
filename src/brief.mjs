@@ -111,7 +111,7 @@ function annotations(s, out, p, { r, text }) {
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const LANG_RE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
 export const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-export const VO_ENGINES = ["azure", "edge"];
+export const VO_ENGINES = ["azure", "edge", "command"];
 const VOICE_RE = /^[A-Za-z]{2,3}-[A-Za-z]{2,4}(-[A-Za-z]+)?-[A-Za-z0-9]+(Neural|MultilingualNeural|HDNeural)?$/;
 const RATE_RE = /^[+-]\d{1,3}%$/;
 const langsFor = (data) => (Array.isArray(data.languages) ? data.languages.filter((l) => typeof l === "string") : ["en"]);
@@ -319,9 +319,27 @@ export function validateBrief(data, baseDir) {
         if (!isObj(vo.voices)) r.error("$.voiceover.voices", 'an object of voice names per language, like {"zh": "zh-CN-YunxiNeural"}');
         else
           for (const [l, v] of Object.entries(vo.voices)) {
-            if (typeof v !== "string" || !VOICE_RE.test(v)) r.error(`$.voiceover.voices.${l}`, 'a voice name like "zh-CN-YunxiNeural"');
+            if (typeof v !== "string" || (engine === "command" ? !v.trim() || v.length > 200 || /[\x00-\x1f]/.test(v) : !VOICE_RE.test(v))) r.error(`$.voiceover.voices.${l}`, engine === "command" ? "a nonempty provider voice ID up to 200 characters" : 'a voice name like "zh-CN-YunxiNeural"');
             else voices[l] = v;
           }
+      }
+      const extra = {};
+      if (engine !== "command") for (const key of ["command", "model", "instructions"])
+        if (vo[key] !== undefined) r.error(`$.voiceover.${key}`, "requires engine:command; Azure/Edge do not accept these bridge controls");
+      if (engine === "command") {
+        if (!Array.isArray(vo.command) || !vo.command.length || vo.command.some(a => typeof a !== "string" || !a || /[\x00-\x1f]/.test(a)))
+          r.error("$.voiceover.command", "a nonempty argv array for a trusted TTS bridge, without shell interpolation");
+        else extra.command = vo.command.map(a => {
+          const file = path.resolve(baseDir, a);
+          return fs.statSync(file, { throwIfNoEntry: false })?.isFile() ? file : a;
+        });
+        if (typeof vo.model !== "string" || !vo.model.trim() || vo.model.length > 200 || /[\x00-\x1f]/.test(vo.model))
+          r.error("$.voiceover.model", "an explicit provider model identifier");
+        else extra.model = vo.model;
+        if (vo.instructions !== undefined && (typeof vo.instructions !== "string" || vo.instructions.length > 4000))
+          r.error("$.voiceover.instructions", "performance instructions up to 4000 characters");
+        else extra.instructions = vo.instructions ?? "";
+        extra.commandCwd = path.resolve(baseDir);
       }
       const rates = {};
       if (vo.rate !== undefined) {
@@ -332,7 +350,7 @@ export function validateBrief(data, baseDir) {
       }
       const required=vo.required ?? (Array.isArray(data.scenes)&&data.scenes.some(s=>s?.narration));
       if(typeof required!=="boolean")r.error("$.voiceover.required","true or false; false is only for deliberately unnarrated output");
-      voiceover = { dir, volume, engine, voices, rates, required };
+      voiceover = { dir, volume, engine, voices, rates, required, ...extra };
     }
   }
 

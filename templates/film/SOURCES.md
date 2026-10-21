@@ -28,3 +28,12 @@ stock context, generated concept imagery and reflowed real-message replay.
 
 Record actual playback and listening coverage. Extracted frames, beat estimates,
 waveforms and automatic checks do not establish an audition or full-film review.
+
+## Narrator casting
+
+Describe language/accent, delivery, emotional arc and audience fit. Compare model,
+voice and performance on the same short passage before generating the whole film.
+`voiceover audition <plan.json> --out <fresh-dir>` makes isolated samples; external
+TTS bridges require `--allow-code`. Record provider/model/voice/settings, actual
+listener, sample/hash, selected candidate and rejection reasons. Credentials or
+the default preview voice do not establish quality. Listening: UNREVIEWED.

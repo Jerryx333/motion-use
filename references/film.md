@@ -138,7 +138,7 @@ motion-use then encodes the sequence at the film's fps and continues unchanged: 
 
 ## Narration is required by default
 
-Add `narration` to each narrated shot as a language map, e.g. `{"zh":"发一条消息。","en":"Send a message."}`. A root `narration` map instead makes one continuous track. Optional `voiceover` settings accept `dir`, `engine` (`azure`/`edge`), `voices`, `rate` and `volume`. Defaults: `voiceover/`, configured Azure or the Edge preview provider, and the bundled Chinese/English voice choices. For other languages, set an appropriate voice explicitly.
+Add `narration` to each narrated shot as a language map, e.g. `{"zh":"发一条消息。","en":"Send a message."}`. A root `narration` map instead makes one continuous track. Optional `voiceover` settings accept `dir`, `engine` (`azure`/`edge`/`command`), `voices`, `rate` and `volume`. Defaults: `voiceover/`, configured Azure or the Edge preview provider, and the bundled Chinese/English voice choices. These defaults are a legacy preview path, not a quality ranking. Choose the narrator with [voice-casting.md](voice-casting.md); other languages need an explicit appropriate voice. `command` additionally takes an argv `command`, explicit `model` and optional `instructions`, requires `--allow-code`, and never falls back to Edge after failure.
 
 `motion-use voiceover <project>` supports films and caches one audio file per language/shot. `render` automatically generates missing or outdated narration before frame capture. Generation uses the voice provider's network service; the frame renderer stays local. Imported `audio` tracks with `role: "voiceover"` take precedence. Optional `lang` selects one language; omit it for an intentionally shared track. User recordings are preserved.
 
