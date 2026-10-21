@@ -99,6 +99,16 @@ function makeHelpers(film, instruments) {
     bars: (n = 1) => (n * state.meter * 60) / state.tempo,
     shot,
     has: (id) => Object.hasOwn(shots, id),
+    rhythmPhase: (id) => {
+      const phase = film.rhythm?.phases?.find((p) => p.id === id);
+      if (!phase) throw new Error(`score: no rhythm phase "${id}"`);
+      return { ...phase, ...(phase.shots ? { shots: [...phase.shots] } : {}) };
+    },
+    rhythmEvent: (id) => {
+      const event = film.rhythm?.events?.find((e) => e.id === id);
+      if (!event) throw new Error(`score: no rhythm event "${id}"`);
+      return event.at;
+    },
     at: (id, offset = 0) => { const s = shot(id); return s.start + offset * (s.authoredDuration ? s.dur / s.authoredDuration : 1); },
     end: (id, offset = 0) => { const s = shot(id); return s.end + offset * (s.authoredDuration ? s.dur / s.authoredDuration : 1); },
     /** Narration windows [{start, end}] in film seconds: leave them room. */
@@ -169,7 +179,7 @@ export function runScore(file, film, instruments) {
   vm.runInContext(source, context, { filename: file, timeout: 5000 });
   const fn = context.window.scoreFilm;
   if (typeof fn !== "function") throw new Error(`${file} must define window.scoreFilm = function (film, S) { … }`);
-  const view = JSON.parse(JSON.stringify({ name: film.name, duration: film.duration, shots: film.shots.map((s) => ({ id: s.id, start: s.start, end: s.end, purpose: s.purpose, action: s.action, camera: s.camera })), voice: film.voice ?? [], copy: film.copy ?? {}, brief: film.brief ?? {}, look: film.look ?? {} }));
+  const view = JSON.parse(JSON.stringify({ name: film.name, duration: film.duration, shots: film.shots.map((s) => ({ id: s.id, start: s.start, end: s.end, purpose: s.purpose, action: s.action, camera: s.camera })), voice: film.voice ?? [], copy: film.copy ?? {}, brief: film.brief ?? {}, look: film.look ?? {}, rhythm: film.rhythm ?? null }));
   fn.call(null, view, S);
   return { why: state.why, tempo: state.tempo, meter: state.meter, key: state.key, room: state.room, tracks, events };
 }

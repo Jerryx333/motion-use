@@ -32,7 +32,7 @@ export function hashBatchPath(target, excludes = [], { ignoreOperational = false
     // Recognition evidence is derived from declared audio/script inputs. Keep
     // .motion-use-voiceover.json: it binds audio to the authored narration.
     if (/^\.motion-use-asr\.json(?:\.lock|\.tmp|\.[0-9a-f-]{36}\.tmp)?$/i.test(name)) return true;
-    return parent === ".motion-use" && ["events.jsonl", "batch"].includes(name);
+    return parent === ".motion-use" && ["events.jsonl", "batch", "review"].includes(name);
   };
   function walk(file, relative) {
     if (excludes.some(ex => contains(ex, file)) || operational(file)) return;

@@ -23,6 +23,14 @@ Part of the [*-use family](https://github.com/leeguooooo/plugins): tools that gi
 
 ## Directed films (default)
 
+`catalog recommend --product-type developer-tool --material screenshot` explains
+selection candidates. Optional `film.json.rhythm` declares the whole-film route,
+intensity phases and shared drawing/score event times; inspect it with `rhythm`.
+`review page` exports an offline click-to-comment frame page, whose JSON feedback
+binds image bytes, location and source revision. Notes can be addressed/reopened
+without pretending visual approval. See [rhythm](references/rhythm.md),
+[selection](references/catalog-selection.md) and [frame review](references/frame-review.md).
+
 ```bash
 motion-use init my-film --name my-product --lang zh,en --format landscape,vertical \
   --subject "a paper boat app" --purpose "App Store preview" --tone "calm, precise" --length 30

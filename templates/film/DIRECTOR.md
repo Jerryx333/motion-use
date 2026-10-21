@@ -10,6 +10,7 @@ Before coding, fill `film.json` → `brief` (subject, purpose, audience, tone, l
 - A shot plan: for each shot, the object, what it does, the camera move (`hold`, `push`, `pan`, `slam`…), the few words on screen, and how the next shot inherits an object or motion.
 - The reference and what you are borrowing (timing, framing, typography), with attribution. `motion-use breakdown ref.mp4` measures a video; `motion-use reference <url>` saves a gallery entry with its credits. Describe the borrowed technique in your own words; never paste the source prompt.
 - The four decisive frames: opening (a concrete small scene, not a title), action, consequence, resolution (an action on the subject, not a centred card).
+- Whole-film rhythm: continuous, montage or hybrid; where intensity builds, pauses, peaks and resolves, and why. Declare optional film.json `rhythm` phases/events and inspect `motion-use rhythm . --json`. Shared `M.rhythmEvent` / `S.rhythmEvent` anchors align picture and music; declared energy is not measured quality.
 
 The default is an 18-second study: two objects, one message, a reply, a network, a name written onto the receiver. There is no required shot count or palette. The code is `composition/draw.js`; `film.json` contains copy, look, output formats, authored shot windows and audio placement.
 
@@ -42,6 +43,8 @@ When the direction is open, compare A (direct), B (another medium), C (another t
 |---|---|---|---|---|---|---|
 | Fill for this subject | Source URL or file | Same ID as film.json | Object/action/consequence | catalog ID or custom | named time or none | Timecode/frame |
 
-Browse `motion-use catalog styles` / `catalog shots`; `catalog --out <fresh-dir>` writes a live study gallery. These are mechanisms to adapt, not film templates. Check one frame before committing to a drawing/footage/mixed route.
+Browse `motion-use catalog styles` / `catalog shots`; use `catalog recommend --product-type developer-tool --material screenshot` for explicit fit conditions. `catalog --out <fresh-dir>` writes a live study gallery. These are mechanisms to adapt, not film templates. Check one frame before committing to a drawing/footage/mixed route.
 
 Keep review findings as time/frame → observable issue → change → rechecked artifact. Retain previous versions and cite the final cut; do not replace evidence with a quality score. Record material sources/permissions in film.json provenance; hashes are calculated by handoff. Use no-captions/no-bgm variants and `handoff` for editing; code-drawn motion remains baked in the picture.
+
+For point-specific feedback, export `review page . --frame <project-local.png> --at <seconds> --out <fresh.html>`. Import the reviewer's JSON with `review add . --input <comment.json>`, inspect `review list .`, and mark addressed only with the current source revision and a new still. Reopen unresolved comments. These records do not establish human visual approval.

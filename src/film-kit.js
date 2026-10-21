@@ -14,6 +14,16 @@ window.__filmKit = function (view, film) {
     if (!s) throw new Error(`shotTime: no shot ${id ?? "at " + t}`);
     return (t - s.start) * ((s.authoredDuration ?? (s.end - s.start)) / (s.end - s.start));
   }
+  function rhythmPhase(id) {
+    const phase = film.rhythm?.phases?.find((p) => p.id === id);
+    if (!phase) throw new Error(`rhythmPhase: no declared phase ${id}`);
+    return { ...phase, ...(phase.shots ? { shots: [...phase.shots] } : {}) };
+  }
+  function rhythmEvent(id) {
+    const event = film.rhythm?.events?.find((e) => e.id === id);
+    if (!event) throw new Error(`rhythmEvent: no declared event ${id}`);
+    return event.at;
+  }
   const clamp = (x) => Math.max(0, Math.min(1, x));
   const lerp = (a, b, p) => a + (b - a) * p;
   const bezier = (x1, y1, x2, y2) => (x) => {
@@ -874,6 +884,8 @@ window.__filmKit = function (view, film) {
 
   return {
     shotTime,
+    rhythmPhase,
+    rhythmEvent,
     easings,
     bezier,
     tween: (t, start, dur, e = "cubicInOut") => easeOf(e)((t - start) / dur),

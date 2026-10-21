@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkFilm, resolveProject, validateFilm } from "./film.mjs";
 import { audioSeconds } from "./build.mjs";
+import { validateRhythm, retimeRhythm } from "./rhythm.mjs";
 
 export function retimeFilm(input, { out, keepCaptions = false, scaleTiming = false } = {}) {
   const file = resolveProject(input),
@@ -28,6 +29,9 @@ export function retimeFilm(input, { out, keepCaptions = false, scaleTiming = fal
       "Retime before placing external captions, cues, audio or footage; their absolute times need deliberate editing. For captions contained in one shot, use --keep-captions.",
     );
   const voDir = checked.film.narrationConfig?.dir;
+  const rhythmValidation = validateRhythm(data.rhythm, data);
+  if (rhythmValidation.errors.length) throw new Error(rhythmValidation.errors.map((e) => `${e.path}: ${e.message}`).join("\n"));
+  const originalShots = data.shots.map((s) => ({ ...s }));
   const captionOwners = Object.entries(data.captions ?? {}).flatMap(([lang, cues]) => cues.map((cue) => {
     const shot = data.shots.find((s) => cue.start >= s.start - 1e-6 && cue.end <= s.end + 1e-6);
     if (!shot) throw new Error(`${lang}: caption spans shot boundaries; edit its timing deliberately`);
@@ -85,6 +89,7 @@ export function retimeFilm(input, { out, keepCaptions = false, scaleTiming = fal
     });
   }
   data.duration = frame / data.fps;
+  if (data.rhythm) data.rhythm = retimeRhythm(data.rhythm, originalShots, data.shots, data.duration);
   for (const { cue, id, start, end } of captionOwners) {
     const shot = data.shots.find((s) => s.id === id);
     if (end > shot.end - shot.start + 1e-6) throw new Error(`${id}: caption exceeds the retimed shot window; regenerate or shorten the caption`);

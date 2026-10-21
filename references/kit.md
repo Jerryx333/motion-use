@@ -91,3 +91,9 @@ Use `M.shotTime(t, id)` for shot-local choreography that follows retime. With a
 shot `authoredDuration`, it returns authored seconds; without one, actual local
 seconds. `retime --scale-timing` records the original durations. See film.md for
 `pace`, speech regeneration and matching score offsets.
+
+`M.rhythmEvent(id)` reads an event's absolute output second from the optional
+`film.json.rhythm` plan; `M.rhythmPhase(id)` reads its declared phase. Score helpers
+use the same names, so a picture event and musical accent share one anchor.
+Missing IDs throw. These declarations do not prove the event was drawn or heard;
+see [rhythm.md](rhythm.md).

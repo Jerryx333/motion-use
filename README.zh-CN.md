@@ -50,6 +50,14 @@ motion-use concat parts.json --out ./joined --release  # 长片分段拼接，�
 
 ## 导演模式（默认）
 
+选型可用 `catalog recommend --product-type developer-tool --material screenshot`，
+结果给出适用条件和理由。整片强弱变化可写入可选的 `film.json.rhythm`，再用
+`motion-use rhythm <film> --json` 检查；画面和配乐可共用节奏事件时间。
+`review page` 可生成离线单帧批注页：点位置、写意见、导出 JSON 后交给 Agent
+导入，记录绑定截图和源码版本，支持处理与重开。
+见[节奏单](references/rhythm.md)、[选型](references/catalog-selection.md)和
+[单帧批注](references/frame-review.md)。计划与处理记录不代表视觉或听审通过。
+
 ```bash
 motion-use init my-film --name my-product --lang zh,en --format landscape,vertical \
   --subject "纸船记账 App" --purpose "App Store 预览视频" --tone "安静、利落" --length 30

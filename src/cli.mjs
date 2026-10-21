@@ -63,7 +63,9 @@ import { X_LIMIT, checkAgainstManifest, encodeMaster, encodeUnder, releaseEntry,
 import { compositeArgs, compositeStill, frameName, frameRange, runEngine, splitFrames, startStreamingEngine } from "./engine.mjs";
 import { chooseRenderer, findRenderer, nativeStills, nativeWorkers, pair, streamRender, unsupportedContext } from "./native.mjs";
 import { mixAudio } from "./mix.mjs";
-import { catalog, writeGallery, initStudy } from "./catalog.mjs";
+import { catalog, recommendCatalog, writeGallery, initStudy } from "./catalog.mjs";
+import { rhythmPlan } from "./rhythm.mjs";
+import { addReview, listReview, updateReview, writeFrameReviewPage } from "./review.mjs";
 import { concatParts } from "./concat.mjs";
 import { exportGeo } from "./geo.mjs";
 import { retimeFilm } from "./retime.mjs";
@@ -84,6 +86,10 @@ Usage: motion-use <command> [options]
   clean plan|apply     Preview owned rebuildable caches; apply a frozen plan (see references/storage.md)
   stats [film|tasks.json|events.jsonl]  Aggregate persisted processing/wall time; unmeasured values remain null
   teaching [film]      Check authored teaching state (--plan lists continuous sample times; --states JSON)
+  rhythm [film]        Report the declared whole-film route, energy phases and events per bar (not measured quality)
+  review page|add|list|done|reopen [film] [id]  Revision-bound PNG feedback; page --frame --at --out <fresh.html>
+                      add --input <comment.json>, or --frame --at --note [--x --y --object]
+                      done --revision <current> --frame <new.png> --note; addressed is not approval
   list                List projects under ~/motion-use (override: MOTION_USE_PROJECTS)
   init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
@@ -111,6 +117,7 @@ Usage: motion-use <command> [options]
                       music line that puts film second 0 on a downbeat (--from/--to: analyse a range)
   compare <a> <b>     Put frames of two videos side by side (--times 1.5,4 --out compare.png)
   catalog [styles|shots] [id]   List original style/shot cards; --out <fresh-dir> writes a live preview gallery
+  catalog recommend --product-type <type> --material <type>  Explain selection candidates, not quality scores
   study <id> <dir>    Create a renderable 6-second study from a catalog card (illustrative, intentionally silent)
   concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
   geo <json|world|china-provinces> Project/simplify map data (--out <new.json>); builtins include provenance
@@ -181,6 +188,8 @@ export async function main(argv) {
     clean: cleanCmd,
     stats: statsCmd,
     teaching: teachingCmd,
+    rhythm: rhythmCmd,
+    review: reviewCmd,
     validate,
     voiceover,
     still,
@@ -220,6 +229,14 @@ export async function main(argv) {
         audience: { type: "string" },
         tone: { type: "string" },
         palette: { type: "string" },
+        "product-type": { type: "string" },
+        material: { type: "string" },
+        input: { type: "string" },
+        note: { type: "string" },
+        frame: { type: "string" },
+        revision: { type: "string" },
+        x: { type: "string" },
+        y: { type: "string" },
         length: { type: "string" },
         lang: { type: "string" },
         format: { type: "string" },
@@ -1086,6 +1103,7 @@ async function render(o, [briefPath]) {
       }
       verification.storage_preflight = o._storage ?? null;
       verification.teaching = o._teaching ?? null;
+      verification.rhythm = proj.film ? rhythmPlan(brief) : null;
       verification.snapshot = snapshot;
       verification.variants = { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]) };
       // pixels differ slightly between renderers: the report says which one made this file
@@ -1160,6 +1178,7 @@ async function render(o, [briefPath]) {
           warnings: verification.warnings,
           errors: verification.errors,
           visual_review: verification.visual_review,
+          rhythm: verification.rhythm && { status: verification.rhythm.status, route: verification.rhythm.route, evidence: verification.rhythm.evidence, warnings: verification.rhythm.warnings },
           // Compact by default: what an agent needs to decide its next step. The report file has the rest.
           narration:
             o.verbose || !verification.narration
@@ -2235,12 +2254,55 @@ async function upgradeCmd(o) {
 }
 
 async function catalogCmd(o, [kind, id, ...extra]) {
+  if (kind === "recommend") {
+    if (id || extra.length) return fail("catalog recommend --product-type <type> --material <type>", o.json);
+    const selected = recommendCatalog({ productType: o["product-type"], material: o.material });
+    const gallery = o.out ? writeGallery(o.out, selected.cards) : null;
+    const result = gallery ? { ...selected, gallery: gallery.gallery, exportedCards: gallery.cards } : selected;
+    if (o.json) console.log(JSON.stringify(result, null, 2));
+    else { console.log(selected.warning); for (const c of selected.cards) console.log(`${c.id} — ${c.reasons.join("; ")}`); if (o.out) console.log(result.gallery); }
+    return 0;
+  }
   if (extra.length) return fail('catalog [styles|shots] [id]', o.json);
   const cards = catalog(kind, id);
   const result = o.out ? writeGallery(o.out, cards) : { ok: true, cards };
   if (o.json) console.log(JSON.stringify(result, null, 2));
   else if (o.out) console.log(result.gallery);
   else for (const c of cards) console.log(`${c.kind} ${c.id} — ${c.title}\n  ${c.use}${id ? `\n  ${c.mechanism}\n  Parameters: ${JSON.stringify(c.parameters)}\n  ${c.pitfalls.join('\n  ')}` : ''}`);
+  return 0;
+}
+
+async function rhythmCmd(o, [input, ...extra]) {
+  if (extra.length) return fail("rhythm [film]", o.json);
+  const data = JSON.parse(fs.readFileSync(resolveProject(input), "utf8"));
+  if (data.kind !== "film" || !Array.isArray(data.shots) || !Number.isFinite(data.duration) || data.duration <= 0) return fail("rhythm needs an authored film timeline", o.json);
+  const result = rhythmPlan(data);
+  if (o.json) console.log(JSON.stringify(result, null, 2));
+  else {
+    console.log(`${result.status}: author-declared plan; visual/listening review UNREVIEWED`);
+    for (const p of result.phases) console.log(`${p.from}–${p.to}s ${p.type} energy ${p.energy}/10; ${p.declaredEventsPerBar ?? "unknown"} declared events/bar; ${p.action}`);
+    for (const e of [...result.errors, ...result.warnings]) console.log(`${e.path}: ${e.message}`);
+  }
+  return result.ok ? 0 : 1;
+}
+
+async function reviewCmd(o, [action, input, id, ...extra]) {
+  if (!action || extra.length || id && !["done", "reopen"].includes(action)) return fail("review page|add|list|done|reopen [film] [id]", o.json);
+  let result;
+  if (action === "list") result = listReview(input);
+  else if (action === "page") result = writeFrameReviewPage(input, o);
+  else if (action === "add") {
+    let options = o;
+    if (o.input) {
+      if (["note", "at", "frame", "x", "y", "object", "shot", "revision"].some((k) => o[k] !== undefined)) return fail("--input cannot accompany inline comment fields", o.json);
+      if (fs.statSync(o.input).size > 30 * 1024 * 1024) return fail("review input is larger than 30 MiB", o.json);
+      options = JSON.parse(fs.readFileSync(o.input, "utf8"));
+      if (!options || options.schemaVersion !== 1 || typeof options.revision !== "string") return fail("review input needs schemaVersion:1 and exported source revision", o.json);
+    }
+    result = addReview(input, options);
+  } else if (["done", "reopen"].includes(action) && id) result = updateReview(input, id, action, o);
+  else return fail("review page|add|list|done|reopen [film] [id]", o.json);
+  console.log(o.json || action !== "page" ? JSON.stringify(result, null, 2) : result.page);
   return 0;
 }
 

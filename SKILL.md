@@ -35,6 +35,8 @@ Read [references/production.md](references/production.md) for direction selectio
 
 `motion-use catalog styles|shots` lists original cards; `catalog --out <fresh-dir>` creates a browsable, scrubbable gallery. `study <id> <fresh-dir>` creates the same mechanism as a renderable six-second silent film. Read the card's parameters and pitfalls before adapting it. These are illustrative studies, not a substitute for the subject's real material or a finished film.
 
+Use `catalog recommend --product-type developer-tool --material screenshot` (or the relevant declared type) to expose fit conditions and reasons, not audience-response scores. See [catalog-selection.md](references/catalog-selection.md). Before coding every move, choose a continuous, montage or hybrid route and plan where intensity changes. Optional `film.json.rhythm` phases/events are checked by `motion-use rhythm <film> --json` and ordinary validation; they remain author declarations, with visual/listening review UNREVIEWED. Missing events/tempo stay unknown. `M.rhythmEvent(id)` / `S.rhythmEvent(id)` share an absolute landing time for drawing and music. Contract and retime limits: [rhythm.md](references/rhythm.md).
+
 `motion-use init <name|path>` writes `SCRIPT.md`, `film.json`, `composition/draw.js`, `composition/score.js` and `DIRECTOR.md`. The starters are studies to replace, not a template to re-skin: a film laid out like it is flagged (`demo_similarity`).
 
 - Lock `look`: one style sentence, one palette, the character approach (none, hands, footage, generated frames — not code-drawn mascots).
@@ -76,6 +78,8 @@ motion-use render <dir> --allow-code --quality draft --json # compact summary
 ```
 
 Read the numbers first; open an image when they do not settle it. Fix clipping, crowding, unreadable text and decoration that does not explain. Stills cannot prove timing: watch a draft.
+
+For frame-specific feedback, export `review page <film> --frame <project-local.png> --at <seconds> --out <fresh.html>`. The offline page lets the reviewer click a position and export a JSON note; import it with `review add <film> --input <comment.json>`. `review list` reports revision/staleness; `review done` requires the current revision, a new PNG and a change note, and records only addressed/UNREVIEWED. Reopen unresolved notes. A time attached to a supplied PNG is author-declared, never assumed renderer proof. See [frame-review.md](references/frame-review.md). No live editor or automatic source-object picking is implied.
 
 `--allow-code` is for projects you wrote in this task or the user trusts; code runs in the renderer and lint is not a sandbox.
 

@@ -22,6 +22,7 @@ import { readVoManifest, estimateCues } from "./voiceover.mjs";
 import { readingSeconds, READING_RULE } from "./text-probe.mjs";
 import crypto from "node:crypto";
 import { validateTiming } from "./timing.mjs";
+import { validateRhythm } from "./rhythm.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const FILM_FORMATS = { ...FORMATS, square: [1440, 1440] };
@@ -77,7 +78,7 @@ export function validateFilm(
   if (phase === "narration" && data && typeof data === "object" && !Array.isArray(data)) {
     // Speech generation/retiming do not consume picture, score or sound effects.
     // Project the input for this phase only; never write this projection back to film.json.
-    const deferred = ["composition", "libraries", "engine", "renderer", "assets", "files", "videos", "fonts", "provenance", "music", "teaching"];
+    const deferred = ["composition", "libraries", "engine", "renderer", "assets", "files", "videos", "fonts", "provenance", "music", "teaching", "rhythm"];
     data = { ...data, music: "none", audio: Array.isArray(data.audio) ? data.audio.filter(a => a?.role === "voiceover") : [] };
     for (const key of deferred) if (key !== "music") delete data[key];
     warnings.push({ path: "$", message: "narration phase: picture, music, SFX, fonts and teaching checks deferred; validate/render/release still require all inputs" });
@@ -93,6 +94,8 @@ export function validateFilm(
   try { resolveNarrationCheckConfig(data); } catch (e) { error("$.narrationCheck", e.message); }
   const teaching = validateTeaching(data.teaching, { duration: data.duration });
   errors.push(...teaching.errors); warnings.push(...teaching.warnings);
+  const rhythm = validateRhythm(data.rhythm, { duration: data.duration, shots: Array.isArray(data.shots) ? data.shots : [] });
+  errors.push(...rhythm.errors); warnings.push(...rhythm.warnings);
   if (data.version !== 1 || data.kind !== "film")
     error("$.kind", 'version: 1, kind: "film"');
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(data.name ?? ""))
@@ -1065,6 +1068,7 @@ export async function buildFilm(film, lang, format, outDir, { range = null, guid
     format,
     copy: film.copy[lang],
     shots: film.shots,
+    rhythm: film.rhythm ?? null,
     motionBlur: overlay ? { samples: 1, shutter: 0 } : (film.motionBlur ?? { samples: 1, shutter: 0 }),
     look: film.look ?? null,
     data: film.data ?? {},
