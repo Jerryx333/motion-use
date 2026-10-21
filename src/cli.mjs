@@ -115,6 +115,7 @@ Usage: motion-use <command> [options]
   concat <parts.json> Join matching rendered parts, normalize the complete mix, check joins; --release makes a master
   geo <json|world|china-provinces> Project/simplify map data (--out <new.json>); builtins include provenance
   retime [film]       Propose shot windows from actual narration; fresh numbered JSON each run (--out refuses conflicts)
+                      --keep-captions shifts cues contained in one shot; --scale-timing records authoredDuration
   music [film]        Play the film's own score (composition/score.js) into a WAV without rendering picture:
                       why, key, tempo, instruments, notes per shot and score warnings (--lang, --out file.wav)
   instruments [list|install]  The recorded instrument pack the scores play (CC0); install fetches it
@@ -266,6 +267,8 @@ export async function main(argv) {
         "asr-model": { type: "string" },
         "no-asr": { type: "boolean" },
         "no-text-check": { type: "boolean" },
+        "keep-captions": { type: "boolean" },
+        "scale-timing": { type: "boolean" },
         "no-captions": { type: "boolean" },
         "no-bgm": { type: "boolean" },
         "word-timing": { type: "boolean" },
@@ -1042,7 +1045,7 @@ async function render(o, [briefPath]) {
         loop: Boolean(proj.film && brief.loop),
         // Authored films are gated on slideshow pacing, empty frames and blue-purple palettes.
         motionCheck: {
-          gate: Boolean(proj.film),
+          gate: Boolean(proj.film && (q !== "draft" || o.release || o.gate)),
           cuts: proj.film
             ? brief.shots.filter((s) => s.cut).map((s) => s.start)
             : proj.scenes.slice(1).map((s) => s.start),
@@ -2259,7 +2262,7 @@ async function handoffCmd(o, [film, ...extra]) {
 
 async function retimeCmd(o, [film, ...extra]) {
   if (extra.length) return fail("retime [film] --out <new-json-beside-film>", o.json);
-  const r = retimeFilm(film, o);
+  const r = retimeFilm(film, { ...o, keepCaptions: o["keep-captions"], scaleTiming: o["scale-timing"] });
   console.log(o.json ? JSON.stringify(r, null, 2) : `${r.film} (${r.duration}s)\n${r.warning}`);
   return 0;
 }

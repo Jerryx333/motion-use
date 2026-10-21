@@ -123,6 +123,7 @@ export function collisionRuns(samples, { alpha = 0.25, ratio = 0.2, minDur = 0.0
       for (let y = x + 1; y < vis.length; y++) {
         const [a, b] = vis[x].order <= vis[y].order ? [vis[x], vis[y]] : [vis[y], vis[x]];
         if (a.text === b.text) continue;
+        if (b.repaintOf?.includes(a.order)) continue;
         const m = meet(a, b),
           shared = area(m);
         if (m.x1 <= m.x0 || m.y1 <= m.y0) continue;
@@ -179,7 +180,7 @@ export function readingSeconds(text) {
 const sameDraw = (a, b) => a.text === b.text && area(meet(a, b)) >= 0.8 * Math.min(area(a), area(b));
 export function distinctBoxes(boxes) {
   const out = [];
-  for (const b of boxes) if (!out.some((o) => sameDraw(o, b))) out.push(b);
+  for (const b of boxes) if (!boxes.some((o) => b.repaintOf?.includes(o.order)) && !out.some((o) => sameDraw(o, b))) out.push(b);
   return out;
 }
 

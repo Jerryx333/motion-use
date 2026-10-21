@@ -276,7 +276,7 @@
       function (text, x, y, maxWidth) {
         try {
           const s = String(text);
-          if (s.trim() && this.globalAlpha > 0.05) {
+          if (s.trim() && this.globalAlpha > 0.05 && !this.__motionUseTexture) {
             const m = this.measureText(s);
             let l = x - m.actualBoundingBoxLeft,
               r = x + m.actualBoundingBoxRight;
@@ -292,7 +292,21 @@
               alpha = +(this.globalAlpha * styleAlpha(this[styleKey])).toFixed(3);
             // Filled text only: an outline is usually there to lift the text off its background.
             const seen = styleKey === "fillStyle" && alpha >= 0.5 ? contrastOf(this, { ...box, det: T.a * T.d - T.b * T.c }, this[styleKey], alpha) : null;
-            boxes.push({ text: s, ...box, alpha, order: order++, ...(seen ?? {}) });
+            const repaintOf = [];
+            // Recognize a colour pass only when its glyph positions agree with
+            // a substring of an earlier draw in the same canvas text state.
+            if (maxWidth === undefined && ["left", "start"].includes(this.textAlign) && this.direction !== "rtl") {
+              for (const old of boxes) {
+                if (old.font !== this.font || old.baseline !== this.textBaseline || !old.draw || old.draw.y !== y || old.draw.matrix.some((v, i) => v !== [T.a,T.b,T.c,T.d,T.e,T.f][i])) continue;
+                for (let index = old.text.indexOf(s); index >= 0; index = old.text.indexOf(s, index + 1)) {
+                  const offset = this.measureText(old.text.slice(0, index)).width;
+                  if (Math.abs(old.draw.x + offset - x) * Math.hypot(T.a, T.b) <= 1) { repaintOf.push(old.order); break; }
+                }
+              }
+            }
+            boxes.push({ text: s, ...box, alpha, order: order++, repaintOf,
+              font: this.font, baseline: this.textBaseline,
+              ...((maxWidth === undefined && ["left", "start"].includes(this.textAlign) && this.direction !== "rtl") ? { draw: { x, y, matrix: [T.a,T.b,T.c,T.d,T.e,T.f] } } : {}), ...(seen ?? {}) });
           }
         } catch {}
         return draw.apply(this, arguments);

@@ -5,7 +5,7 @@ import path from "node:path";
 import { checkFilm, resolveProject, validateFilm } from "./film.mjs";
 import { audioSeconds } from "./build.mjs";
 
-export function retimeFilm(input, { out } = {}) {
+export function retimeFilm(input, { out, keepCaptions = false, scaleTiming = false } = {}) {
   const file = resolveProject(input),
     dir = path.dirname(file);
   const checked = checkFilm(file, { skipGeneratedVoiceover: true, phase: "narration" });
@@ -19,20 +19,26 @@ export function retimeFilm(input, { out } = {}) {
       "retime needs per-shot narration, not a continuous root narration",
     );
   if (
-    data.captions ||
+    (data.captions && !keepCaptions) ||
     data.cues ||
     data.audio?.some((a) => !a.shot) ||
     Object.values(data.videos ?? {}).some((v) => !v.shot)
   )
     throw new Error(
-      "Retime before placing external captions, cues, audio or footage; their absolute times need deliberate editing.",
+      "Retime before placing external captions, cues, audio or footage; their absolute times need deliberate editing. For captions contained in one shot, use --keep-captions.",
     );
   const voDir = checked.film.narrationConfig?.dir;
+  const captionOwners = Object.entries(data.captions ?? {}).flatMap(([lang, cues]) => cues.map((cue) => {
+    const shot = data.shots.find((s) => cue.start >= s.start - 1e-6 && cue.end <= s.end + 1e-6);
+    if (!shot) throw new Error(`${lang}: caption spans shot boundaries; edit its timing deliberately`);
+    return { cue, id: shot.id, start: cue.start - shot.start, end: cue.end - shot.start };
+  }));
   let frame = 0;
   const changes = [];
   for (const shot of data.shots) {
     const before = { start: shot.start, end: shot.end };
-    let count = Math.round((shot.end - shot.start) * data.fps);
+    if ((scaleTiming || data.pace !== undefined) && shot.authoredDuration === undefined) shot.authoredDuration = shot.end - shot.start;
+    let count = Math.round((data.pace !== undefined ? shot.authoredDuration / data.pace : shot.end - shot.start) * data.fps);
     if (shot.duration === "narration") {
       if (!voDir || !shot.narration)
         throw new Error(`${shot.id}: needs generated per-shot narration`);
@@ -64,7 +70,7 @@ export function retimeFilm(input, { out } = {}) {
         return audioSeconds(clip);
       });
       count = Math.ceil(
-        (0.16 + Math.max(...seconds) + (shot.tail ?? 0.4)) * data.fps,
+        (0.16 + Math.max(...seconds) + (shot.tail ?? 0.4) / (data.pace ?? 1)) * data.fps,
       );
     }
     if (count < 1)
@@ -79,10 +85,12 @@ export function retimeFilm(input, { out } = {}) {
     });
   }
   data.duration = frame / data.fps;
-  if (data.duration > 180)
-    throw new Error(
-      `Retimed film is ${data.duration}s; split into parts and use concat (single-film limit 180s)`,
-    );
+  for (const { cue, id, start, end } of captionOwners) {
+    const shot = data.shots.find((s) => s.id === id);
+    if (end > shot.end - shot.start + 1e-6) throw new Error(`${id}: caption exceeds the retimed shot window; regenerate or shorten the caption`);
+    cue.start = shot.start + start;
+    cue.end = shot.start + end;
+  }
   let target = path.resolve(out ?? path.join(dir, "film.retimed.json"));
   // Each default proposal gets a new filename; a failed iteration cannot advertise the old one.
   if (out === undefined) {

@@ -97,10 +97,10 @@ export function validateFilm(
     error("$.kind", 'version: 1, kind: "film"');
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(data.name ?? ""))
     error("$.name", "a lowercase slug, 1–40 characters");
-  if (!finite(data.duration, 1, 180))
+  if (!finite(data.duration, 1, 3600))
     error(
       "$.duration",
-      "seconds, 1–180; authored timing is never silently stretched",
+      "seconds, 1–3600; authored timing is never silently stretched",
     );
   if (data.brief !== undefined) {
     const b = data.brief;
@@ -109,8 +109,8 @@ export function validateFilm(
     else {
       for (const [k, v] of Object.entries(b)) {
         if (k === "length") {
-          if (!finite(v, 1, 180)) error("$.brief.length", "target seconds, 1–180");
-          else if (finite(data.duration, 1, 180) && Math.abs(v - data.duration) > 0.5)
+          if (!finite(v, 1, 3600)) error("$.brief.length", "target seconds, 1–3600");
+          else if (finite(data.duration, 1, 3600) && Math.abs(v - data.duration) > 0.5)
             warnings.push({ path: "$.brief.length", message: `the brief asks for ${v} s but the shots cover ${data.duration} s: re-plan the shots and set duration` });
         } else if (typeof v !== "string" || v.length > 500)
           error(`$.brief.${k}`, "text, at most 500 characters");
@@ -120,6 +120,7 @@ export function validateFilm(
     }
   }
   if (!FPS_VALUES.includes(data.fps)) error("$.fps", "24, 25, 30 or 60");
+  if (data.pace !== undefined && !finite(data.pace, 0.5, 2)) error("$.pace", "speech and retime pace multiplier, 0.5–2 (1.25 is faster); regenerate voiceover then retime");
   for (const [key, allowed] of [
     ["languages", null],
     ["formats", Object.keys(FILM_FORMATS)],
@@ -281,7 +282,7 @@ export function validateFilm(
       );
     // Declared files are loaded from the page's own folder; host names stay forbidden.
     const loads = data.files && typeof data.files === "object" && Object.keys(data.files).length;
-    for (const issue of lintCustomHtml(src))
+    for (const issue of lintCustomHtml(src, { javascript: true }))
       if (!(loads && issue.rule === "network" && /^(fetch|XMLHttpRequest)$/.test(issue.match))) error(
         "$.composition",
         `${issue.rule}: ${issue.match}; render from time with local assets`,
@@ -337,6 +338,7 @@ export function validateFilm(
     text(s.action, `${p}.action`);
     if (s.duration !== undefined && s.duration !== "narration") error(`${p}.duration`, '"narration" for retime; start/end remain the execution timeline');
     if (s.tail !== undefined && !finite(s.tail, 0, 10)) error(`${p}.tail`, "narration tail seconds, 0–10");
+    if (s.authoredDuration !== undefined && !finite(s.authoredDuration, 1 / data.fps, 3600)) error(`${p}.authoredDuration`, "original choreography duration, at least one frame and at most 3600 seconds; use M.shotTime(t, id)");
     if (s.hold !== undefined && !finite(s.hold, 0, s.end - s.start))
       error(`${p}.hold`, "seconds, within the shot");
     if (s.hold > 1 && !s.holdReason)
@@ -467,7 +469,7 @@ export function validateFilm(
         }
         const length = a.length !== undefined ? a.length - trimmed : sourceSeconds - offset;
         if (
-          !finite(length, 0.01, 180) ||
+          !finite(length, 0.01, 3600) ||
           offset + length > sourceSeconds + 0.05 ||
           start + length > data.duration + 0.05
         )
@@ -506,11 +508,10 @@ export function validateFilm(
   )
     error("$.assets", "named local image files");
   for (const [k, v] of Object.entries(data.assets ?? {})) {
-    if (
-      !/^[a-z][a-z0-9-]{0,39}$/i.test(k) ||
-      !/\.(png|jpe?g|webp|svg)$/i.test(v)
-    )
-      error(`$.assets.${k}`, "named PNG/JPG/WebP/SVG image");
+    if (!/^[a-z][a-z0-9-]{0,39}$/i.test(k))
+      error(`$.assets.${k}`, `asset name must start with a letter and contain only letters, digits or hyphens (max 40 characters); rename e.g. to "${k.replace(/_/g, "-")}" and read window.filmAssets["${k.replace(/_/g, "-")}"] in draw`);
+    if (typeof v !== "string" || !/\.(png|jpe?g|webp|svg)$/i.test(v))
+      error(`$.assets.${k}`, "local PNG/JPG/WebP/SVG image path");
     const f = local(v, `$.assets.${k}`);
     if (f) fileAssets[k] = f;
   }
@@ -566,7 +567,7 @@ export function validateFilm(
       const end = v.shot ? shot.end : data.duration;
       const room = Math.max(0, (info.duration - from) / rate);
       const length = v.length ?? Math.min(v.hold === "last" ? end-at : room, end-at);
-      if (!finite(length, 0.04, 180) || room <= 0 || (v.hold !== "last" && length > room + 0.001) || at + length > end + 0.001)
+      if (!finite(length, 0.04, 3600) || room <= 0 || (v.hold !== "last" && length > room + 0.001) || at + length > end + 0.001)
         throw Error(`length ${length.toFixed?.(3) ?? length} s of film × rate ${rate} = ${(length*rate).toFixed(3)} s of source from ${from}; source duration ${info.duration.toFixed(3)} s, max length ${Math.min(room,end-at).toFixed(3)} s (${v.hold === "last" ? "hold:last permits source overflow" : "set length/from or hold:last"}); film/shot ends at ${end} s`);
       const holdUntil = Math.min(shot?.end ?? data.duration, ...Object.values(data.videos ?? {}).filter((other) => other !== v).map((other) => { try { const t = anchoredTime(other,shots,"at"); return t>at ? t : data.duration; } catch { return data.duration; } }));
       videoFrames += sequence ? Math.min(sequence.length,Math.ceil((from+Math.min(length,room)*rate)*v.fps)-Math.floor(from*v.fps)) : Math.ceil(Math.min(length,room) * data.fps);
@@ -830,7 +831,7 @@ export function initFilm(o, dir) {
     if (typeof o[k] === "string" && o[k].trim()) data.brief[k] = o[k].trim();
   if (o.length !== undefined) {
     const n = Number(o.length);
-    if (!finite(n, 1, 180)) throw new BriefError("--length: seconds, 1–180");
+    if (!finite(n, 1, 3600)) throw new BriefError("--length: seconds, 1–3600");
     data.brief.length = n;
   }
   if (o.palette) {

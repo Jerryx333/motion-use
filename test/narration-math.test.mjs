@@ -78,7 +78,7 @@ test('content cache separates language and params and never caches partial resul
 
 test('project configuration is pinned, validated and overridable',()=>{
   assert.deepEqual(resolveNarrationCheckConfig({narrationCheck:{model:'medium',fallbackModel:'large',params:{beam_size:3}}},{},{MOTION_USE_ASR_MODEL:'small'}),{
-    model:'medium',fallbackModel:'large',params:{beam_size:3,vad_filter:false,condition_on_previous_text:false},comparatorVersion:'2'
+    model:'medium',fallbackModel:'large',params:{beam_size:3,vad_filter:false,condition_on_previous_text:false},comparatorVersion:'3'
   });
   assert.equal(resolveNarrationCheckConfig({narrationCheck:{model:'medium'}},{model:'small'}).model,'small');
   assert.throws(()=>resolveNarrationCheckConfig({narrationCheck:{params:{initial_prompt:'expected answer'}}}),/unsupported/);

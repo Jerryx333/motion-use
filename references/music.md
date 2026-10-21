@@ -46,7 +46,7 @@ window.scoreFilm = function (film, S) {
 |---|---|
 | `why(text)` | required: what this music is and why it fits this film |
 | `tempo(bpm)`, `meter(n)`, `beats(n)`, `bars(n)` | timing; `beats`/`bars` return seconds |
-| `shot(id)`, `at(id, offset)`, `end(id, offset)`, `shots`, `duration` | film timing |
+| `has(id)`, `shot(id)`, `at(id, offset)`, `end(id, offset)`, `shots`, `duration` | `has` checks optional shots; missing `shot/at/end` still throws. Offsets scale by actual / `authoredDuration` when declared |
 | `voice`, `speaking(t)` | narration windows |
 | `scale(root, mode, octave)` | a function `deg → midi`; degrees wrap octaves (`sc(-1)` is below the tonic). Modes: `major minor dorian phrygian lydian mixolydian harmonic-minor gong shang jue zhi yu hirajoshi in blues whole-tone chromatic`, or an array of semitones |
 | `chordOf(scale, deg, size, oct)` | stacked thirds within the scale |

@@ -175,3 +175,11 @@ still/render 会立即报错。子命令支持 `--help`。
 接口细节见[影片契约](references/film.md)。
 
 批量课程制作：[任务恢复、旁白审核、章节与交付流程](references/course-workflow.md)。
+
+
+单片支持 1–3600 秒，native 连续输出画面，配乐整片生成一次。draft 的运动红灯
+保留为警告；standard/high、release 和显式 gate 仍执行门槛。
+`retime --keep-captions` 可平移镜头内字幕，超出新窗口时报错。
+整体提速可设置 `pace:1.25`，重新生成旁白再 retime；镜头编排使用
+`M.shotTime(t,id)`，配合 `authoredDuration` 或 `retime --scale-timing`。
+装饰文字用 `M.texture(c,ctx=>{...})`，普通文字继续检查。

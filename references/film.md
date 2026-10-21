@@ -18,7 +18,7 @@
 }
 ```
 
-Formats: `landscape` 1920×1080, `vertical` 1080×1920, `square` 1440×1440. Frame rates: 24/25/30/60. Duration: 1–180 seconds. Shots cover the whole duration without gaps or overlap. Optional `cut: true` documents a deliberate cut (the motion check treats it as a transition); optional `hold` and `holdReason` document stillness; optional `camera` (`hold`, `push`, `pull`, `pan`, `slam`, `whip`, `follow`, `cut`, `drift`) and `text` (planned on-screen words, a string or language map) let validation check the plan. Shots annotate your code; they do not generate or impose visual scenes. Optional `loop: true` marks a film that repeats: `render` (and `verify --loop`) compares the last frame with the first and warns when the seam jumps further than an ordinary frame step.
+Formats: `landscape` 1920×1080, `vertical` 1080×1920, `square` 1440×1440. Frame rates: 24/25/30/60. Duration: 1–3600 seconds. Shots cover the whole duration without gaps or overlap. Optional `cut: true` documents a deliberate cut (the motion check treats it as a transition); optional `hold` and `holdReason` document stillness; optional `camera` (`hold`, `push`, `pull`, `pan`, `slam`, `whip`, `follow`, `cut`, `drift`) and `text` (planned on-screen words, a string or language map) let validation check the plan. Shots annotate your code; they do not generate or impose visual scenes. Optional `loop: true` marks a film that repeats: `render` (and `verify --loop`) compares the last frame with the first and warns when the seam jumps further than an ordinary frame step.
 
 Optional `brief` holds what a user changes first, as fields: `subject`, `purpose` (where it plays, what the viewer does next), `audience`, `tone`, `length` (target seconds) and `reference` (a folder from `motion-use reference`). `init --subject … --purpose … --audience … --tone … --palette … --length …` fills them; validation warns while a field still starts with `TODO` and when `length` differs from the shots' `duration`. Read the brief before planning shots; it is not rendered.
 
@@ -165,11 +165,11 @@ For bundled licensed sounds, use `{"effect":"click","role":"sfx","start":3.38,"v
 
 `render` writes a technical report and contact sheet from the delivered MP4. It checks full-file decoding, measured dimensions/FPS/duration, audio presence, integrated loudness, true peak and per-shot RMS. Black intervals and freeze starts over 0.8 seconds are signals to inspect. Review times include the opening, shot midpoints, the final frame, and both sides of shot boundaries.
 
-`motion` in the report holds the motion lights measured on the MP4: fast movement inside shots, empty mid-film frames, blue-purple share and flashes (WCAG 2.3.1: more than three general flashes in any one second is red, with the window in `flash_windows`) (thresholds and calibration in [directing.md](directing.md)). For authored films a red light fails delivery and the previous video stays in place; `--allow-static "why"` / `--allow-blue-purple "why"` (or the matching `look` fields) downgrade it to yellow and are recorded under `motion.allowed`. Films shorter than 20 s get yellow instead of red for pacing. `independent_reviews` lists `reviews/*.md` notes written by someone who watched only the MP4. `motion.demo_similarity` is the share of frames that follow the starter or a bundled example: runs of at least three consecutive frames whose layout matches one demo (edges and brightness, polarity ignored, so a re-coloured copy still counts) while advancing through it in order. A single look-alike frame does not count. A warning at 0.3; never a gate. `render --json` prints a compact summary; add `--verbose` for every narration segment and motion light.
+`motion` in the report holds the motion lights measured on the MP4: fast movement inside shots, empty mid-film frames, blue-purple share and flashes (WCAG 2.3.1: more than three general flashes in any one second is red, with the window in `flash_windows`) (thresholds and calibration in [directing.md](directing.md)). For authored films a red light fails standard/high delivery, `--release` and `--gate`; draft renders keep red lights as warnings and exit zero when all other checks pass; `--allow-static "why"` / `--allow-blue-purple "why"` (or the matching `look` fields) downgrade it to yellow and are recorded under `motion.allowed`. Films shorter than 20 s get yellow instead of red for pacing. `independent_reviews` lists `reviews/*.md` notes written by someone who watched only the MP4. `motion.demo_similarity` is the share of frames that follow the starter or a bundled example: runs of at least three consecutive frames whose layout matches one demo (edges and brightness, polarity ignored, so a re-coloured copy still counts) while advancing through it in order. A single look-alike frame does not count. A warning at 0.3; never a gate. `render --json` prints a compact summary; add `--verbose` for every narration segment and motion light.
 
 `narration_check`: before capture, render transcribes every generated narration clip (faster-whisper through `uv`, model `small` unless `--asr-model`; transcripts cached in `voiceover/.motion-use-asr.json` by clip hash) and compares it with its script. Flagged: an acronym or Latin word heard differently ("AI" spoken "A-A-I" — spell it "A I" in the script, subtitles may keep "AI"), a homophone that forms a dictionary word with a many-reading neighbour (重试 heard 重视: the voice read 重 as zhòng — use 再试), a different-sounding word, missing or extra words, or a line under 80 % similar. Plain ASR spelling (它 → 他) is listed but not flagged. Without `uv` or the model the check is skipped with a note. `motion-use voiceover check <dir>` runs it alone; `--no-asr` skips it.
 
-`text_check`: render and still draw the film every 0.1 s on a private canvas and measure each `fillText`/`strokeText` box through the current transform. Text partly off the frame for 0.3 s or more is reported with its string and time (a whip through an edge is not); in portrait, text outside `view.safe` likewise. It also reports two different strings drawn over each other while both are at least 25% opaque (a cross-fade that puts the new line where the old one is still fading, a footnote under a translucent subtitle plate): wherever the visible strings change between samples it re-draws every frame, so a 0.08 s overlap is found. An opaque fill drawn between the two (a solid plate) hides the lower one and does not count. It also reports, as warnings only: a line gone before it can be read (0.3 s per word + 0.15 s per CJK character + 0.5 s; a line counts from when its first word or letter appeared, digits are ignored so a rolling counter is one line, and a line still up at the end is not judged), and filled text under WCAG contrast against the median pixel under its box while fully shown for 0.3 s or more (4.5:1; 3:1 for large text, 24 px or more, or 18.66 px at weight 700+, in frame pixels, which most film titles are). The colour is the fill style of the draw call; gradients, patterns and outlines are not judged. Text drawn into your own offscreen canvas is not seen, nor text an external engine draws (an overlay composition is measured; see External engines). `--gate` makes a flagged narration line, off-frame text or a collision fail the render; `--no-text-check` skips it.
+`text_check`: render and still draw the film every 0.1 s on a private canvas and measure each `fillText`/`strokeText` box through the current transform. Text partly off the frame for 0.3 s or more is reported with its string and time (a whip through an edge is not); in portrait, text outside `view.safe` likewise. It also reports two different strings drawn over each other while both are at least 25% opaque (a cross-fade that puts the new line where the old one is still fading, a footnote under a translucent subtitle plate): wherever the visible strings change between samples it re-draws every frame, so a 0.08 s overlap is found. An opaque fill drawn between the two (a solid plate) hides the lower one and does not count. It also reports, as warnings only: a line gone before it can be read (0.3 s per word + 0.15 s per CJK character + 0.5 s; a line counts from when its first word or letter appeared, digits are ignored so a rolling counter is one line, and a line still up at the end is not judged), and filled text under WCAG contrast against the median pixel under its box while fully shown for 0.3 s or more (4.5:1; 3:1 for large text, 24 px or more, or 18.66 px at weight 700+, in frame pixels, which most film titles are). The colour is the fill style of the draw call; gradients, patterns and outlines are not judged. For decorative text use `M.texture(c, ctx => { /* text as texture */ })`; the callback is excluded from all text checks. Text drawn into your own offscreen canvas is also not seen, nor text an external engine draws (an overlay composition is measured; see External engines). `--gate` makes a flagged narration line, off-frame text or a collision fail the render; `--no-text-check` skips it.
 
 `snapshot`: each full render stores its inputs (film.json, drawing code, voiceover clips and their manifest, footage, images, `files`, an external engine's script files, music; files over 200 MB by hash only) under `out/.snapshots/`, deduplicated by sha256. `render --snapshot <id or release-manifest.json>` restores them and renders into `out/snapshot-<id>/` — the same cut after the narration or film changed (with the same motion-use version, bit-identical).
 
@@ -211,7 +211,7 @@ Generated narration is MP3 (`voiceover/<lang>/<shot-id>.mp3`, Azure: 24 kHz, 96 
 
 For per-shot timing, mark shots `"duration":"narration","tail":0.4` while retaining provisional numeric start/end. Generate narration first, then run `motion-use retime <film> --out <new-json-beside-film>`. It uses the longest measured clip across languages, adds the 0.08 s lead, 0.08 s end margin and requested tail, and rounds to whole frames. Other shots keep their frame-rounded durations. The proposal defaults to `film.retimed.json`; the source file and `brief.length` target are preserved. Review the difference before rendering the proposal. A target mismatch remains visible as a warning.
 
-Retime before placing external subtitles/cues or absolute-time audio/footage; shot-anchored audio/footage can follow the retimed windows. Root continuous narration cannot set per-shot lengths. A proposal over 180 seconds needs parts, described below. Music hit times and drawing choreography still need to follow the new shot windows.
+Retime before placing external subtitles/cues or absolute-time audio/footage; shot-anchored audio/footage can follow the retimed windows. Root continuous narration cannot set per-shot lengths. Films up to 3600 seconds can use a single timeline and soundtrack. Music hit times and drawing choreography still need to follow the new shot windows.
 
 For measured word timing, `voiceover --engine azure --word-timing` uses Azure Speech SDK 1.52.0 in an optional uv-managed Python environment. Credentials remain in the environment; audio and service word boundaries are cached together. No call to this service happens in catalog, handoff or retime. The normal Azure REST route remains audio-only. SDK unavailable or no returned boundaries means an explicit failure, not invented timing. [Azure event documentation](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-speech-synthesis#subscribe-to-synthesizer-events).
 
@@ -267,7 +267,7 @@ Use null when a source/permission is unknown, rather than guessing. Hashes are c
 
 ## Long films assembled from parts
 
-Single films keep their 180-second limit; a joined master can be longer. Render all parts at identical size and frame rate, then write:
+A single authored film can run up to 3600 seconds. Native rendering streams frames into one encoder and mixes the full soundtrack once, so there is no 180-second split or music restart. Use separate parts when you want independent production/review units; a joined master can be longer. Render all parts at identical size and frame rate, then write:
 
 ```json
 {"name":"history","lang":"zh","format":"landscape","parts":[
@@ -332,6 +332,10 @@ motion within the shot. Native stills pass full-precision timestamps.
 Use a separate `--out` for simultaneous jobs. A crash leaves the PID, host and run
 ID for inspection; locks are never stolen automatically. Only remove an abandoned
 lock after verifying its owner has stopped (including any renderer/encoder children).
+On a requested batch cancellation, the supervisor records locks created by its
+own built-in children and removes only matching PID/host/run locks after their
+whole process group has exited. Forced SIGKILL, crashes, external executables
+and unknown owners retain their locks for inspection; cancellation stays cancelled.
 
 `render --json --progress json` writes one final result to stdout and newline-delimited
 progress events to stderr (`--progress text` is human-readable; default `none`).
@@ -419,8 +423,10 @@ containing shot's start, then plays normally; it does not extend the end. Withou
 hold, M.video returns null outside the declared playback window.
 
 Retime accepts shot-anchored videos/audio and recomputes their placement when
-validating the proposal. It still refuses absolute audio/video, external captions
-or cues, and continuous root narration. Explicit lengths must fit the new windows;
+validating the proposal. It still refuses absolute audio/video, external cues and continuous root narration.
+For explicit captions, use `retime --keep-captions`: each cue must fit wholly inside
+one original shot; it shifts with that shot and must still fit its new window.
+Cross-shot or overflowing cues fail without writing a proposal. Explicit lengths must fit the new windows;
 retime reports a conflict instead of silently truncating content. Code event times,
 score hits and any unanchored choreography remain the author's responsibility.
 
@@ -439,3 +445,44 @@ not count as movement within that shot. Short shots may have no samples (`unknow
 These lights locate weak motion; they do not add release gates calibrated on long
 films. Range drafts return the same statistics in output.motion with times relative
 to the exported range, plus original `from`/`to`, and save a preview report.
+
+
+### Retiming choreography and speech pace
+
+Set `pace: 1.25` in film.json for faster speech, regenerate voiceover, then retime.
+Pace accepts 0.5–2, multiplies the configured speech rate through TTS (no pitch
+shift), divides narration tails, and scales fixed-shot lengths. Existing audio
+with old settings fails freshness checks. Imported recordings need deliberate editing.
+
+Use `const lt = M.shotTime(t, "shot-id")` for events authored in shot-local seconds.
+`retime --scale-timing` records each shot's original `authoredDuration`; a film
+with `pace` does this automatically. Future retimes preserve that original value.
+`M.shotTime` maps the new actual window to this authored duration, and `S.at` /
+`S.end` scale their offsets in the opposite direction, keeping picture and music
+hits together. Omit `authoredDuration` to keep actual local seconds. Film time `t`,
+caption times, measured `M.at` word cues and media playback stay in real seconds.
+Existing drawings using `t - shot.start` must opt into `M.shotTime`; arbitrary
+JavaScript event constants cannot be inferred or rewritten safely.
+
+### Text textures and colour highlights
+
+Use `M.texture(c, ctx => { ... })` for labels used as grain, 3D surfaces or
+background patterns. Its synchronous callback still draws normally but the
+probe excludes those strings from collisions, clipping, reading and contrast.
+Nested scopes and exceptions restore the previous state. Keep informative text
+outside this scope. OffscreenCanvas followed by drawImage is another supported
+way to build a text texture.
+
+A substring repainted in another colour is recognized when font, baseline,
+transform and measured horizontal prefix offset agree (within one output pixel).
+Only the highlight pass is ignored for collision/reading identity; the full line
+is still checked. Displaced or differently sized text can still collide. For
+complex text alignment, draw prefix / highlight / suffix separately instead.
+
+URLs written for display in draw.js strings or comments pass lint. Real network
+calls, dynamic imports, remote image src and resource URLs still fail; use local
+assets/files for loading. This check is lint, not a JavaScript sandbox.
+
+PNG assets with C2PA `caBX` chunks decode natively. The decoder omits the manifest
+only from its in-memory decode copy; source files, snapshots and colour metadata
+remain intact. This does not verify a content credential or establish asset rights.

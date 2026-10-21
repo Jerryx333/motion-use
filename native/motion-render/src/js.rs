@@ -177,7 +177,29 @@ fn cicp_space(primaries: u8, transfer: u8) -> Option<sk::ColorSpace> {
     sk::ColorSpace::new_cicp(p, t)
 }
 
+// C2PA manifests can exceed the PNG codec's ancillary-chunk budget. They do not
+// affect pixels. Exclude only caBX from the decoder's copy; retain the source
+// file, colour profiles and all other chunks. Bounds are checked before copying.
+fn png_without_c2pa(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return None; }
+    let mut out = bytes[..8].to_vec();
+    let mut at = 8usize;
+    let mut removed = false;
+    while at < bytes.len() {
+        let header = bytes.get(at..at.checked_add(8)?)?;
+        let length = u32::from_be_bytes(header[..4].try_into().ok()?) as usize;
+        let end = at.checked_add(12)?.checked_add(length)?;
+        let chunk = bytes.get(at..end)?;
+        if &header[4..8] == b"caBX" { removed = true; }
+        else { out.extend_from_slice(chunk); }
+        at = end;
+    }
+    removed.then_some(out)
+}
+
 fn decode_image(bytes: &[u8], name: &str) -> Option<ImageSrc> {
+    let without_c2pa = png_without_c2pa(bytes);
+    let bytes = without_c2pa.as_deref().unwrap_or(bytes);
     let head = &bytes[..bytes.len().min(512)];
     let looks_svg = name.to_ascii_lowercase().ends_with(".svg") || String::from_utf8_lossy(head).contains("<svg");
     if looks_svg {

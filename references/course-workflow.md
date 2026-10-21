@@ -13,7 +13,7 @@ motion-use voiceover lesson --engine azure --word-timing --json
 motion-use retime lesson --json
 ```
 
-Read the returned `film` path. Default retime proposals are `film.retimed.json`, `film.retimed-2.json`, etc.; earlier proposals and the original stay intact. Explicit `--out` never overwrites an existing file. Review the new timeline before adopting it. A failure has no usable new proposal.
+Read the returned `film` path. Default retime proposals are `film.retimed.json`, `film.retimed-2.json`, etc.; earlier proposals and the original stay intact. Explicit `--out` never overwrites an existing file. Review the new timeline before adopting it. A failure has no usable new proposal. `--keep-captions` shifts explicit cues wholly contained in one shot, rejecting overflow. `--scale-timing` records original choreography durations for `M.shotTime` and score offsets; film `pace` also scales speech rate and tails after regeneration. Single films support 1–3600 seconds with one continuous soundtrack.
 
 Voiceover generation validates narration inputs, deferring picture/music/SFX/font inputs. Retime defers music while checking existing anchored assets against the proposed windows. Full `validate`, `render` and `--release` still require complete assets.
 

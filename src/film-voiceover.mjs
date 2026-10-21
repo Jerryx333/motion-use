@@ -69,6 +69,14 @@ export function resolveNarration(
       error("$.voiceover.dir", "directory symlink escapes the project");
   }
   const config = { ...checked.brief.voiceover, dir };
+  if (film.pace !== undefined && Number.isFinite(film.pace) && film.pace >= 0.5 && film.pace <= 2) {
+    config.rates = Object.fromEntries(languages.map((lang) => {
+      const base = parseFloat(config.rates[lang] ?? "+0%");
+      const rate = Math.round(((1 + base / 100) * film.pace - 1) * 100);
+      if (rate <= -100 || rate > 200) error("$.pace", `effective ${lang} speech rate is outside -99%..+200%; reduce voiceover.rate or pace`);
+      return [lang, `${rate >= 0 ? "+" : ""}${rate}%`];
+    }));
+  }
   const map = (v, p, select = spoken) => {
     const out = {};
     for (const l of languages) {

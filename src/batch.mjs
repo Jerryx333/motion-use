@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { acquireOutputLock } from "./output-lock.mjs";
+import { acquireOutputLock, releaseCancelledOutputLock } from "./output-lock.mjs";
 import { createJournal } from "./journal.mjs";
 import { diskSpace, storagePreflight } from "./storage.mjs";
 
@@ -174,18 +174,33 @@ function execute(task, logFile, signal, journalFile, parentRun) {
       fs.ftruncateSync(fd, 0);
     } catch (e) { fs.closeSync(fd); throw e; }
     const group = process.platform !== "win32";
-    const child = spawn(task.executable ?? process.execPath, task.executable ? task.command : [cli, ...task.command], { cwd: task.cwd, shell: false, detached: group, stdio: ["ignore", fd, fd], env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1", MOTION_USE_JOURNAL_FILE: journalFile, MOTION_USE_JOURNAL_PARENT_RUN: parentRun } });
+    const token = crypto.randomUUID(), locks = [];
+    const child = spawn(task.executable ?? process.execPath, task.executable ? task.command : [cli, ...task.command], { cwd: task.cwd, shell: false, detached: group, stdio: ["ignore", fd, fd, ...(!task.executable ? ["ipc"] : [])], env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1", MOTION_USE_JOURNAL_FILE: journalFile, MOTION_USE_JOURNAL_PARENT_RUN: parentRun, MOTION_USE_BATCH_LOCK_TOKEN: task.executable ? "" : token } });
+    if (!task.executable) child.on("message", (m) => {
+      if (m?.type === "motion-use-output-lock" && m.token === token && m.owner?.pid === child.pid && typeof m.file === "string") locks.push(m);
+    });
     fs.closeSync(fd);
-    let timer;
+    let timer, forced = false;
     const kill = sig => { try { if (group && child.pid) process.kill(-child.pid, sig); else child.kill(sig); } catch (e) { if (e.code !== "ESRCH") reject(e); } };
-    const abort = () => { kill("SIGTERM"); timer = setTimeout(() => kill("SIGKILL"), 2000); timer.unref(); };
+    const abort = () => { kill("SIGTERM"); timer = setTimeout(() => { forced = true; kill("SIGKILL"); }, 2000); timer.unref(); };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
     child.on("error", reject);
-    child.on("close", (code, terminationSignal) => {
+    child.on("close", async (code, terminationSignal) => {
       signal.removeEventListener("abort", abort);
       clearTimeout(timer);
-      if (signal.aborted && group) kill("SIGKILL");
+      if (signal.aborted && group) {
+        // Closing stdio can precede a descendant's exit. Never release while a
+        // renderer still owns the process group, or after force-killing it.
+        const alive = () => { try { process.kill(-child.pid, 0); return true; } catch (e) { return e.code !== "ESRCH"; } };
+        const until = Date.now() + 2000;
+        while (alive() && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+        if (alive()) { forced = true; kill("SIGKILL"); }
+        if (!forced && terminationSignal === "SIGTERM") {
+          try { for (const lock of locks) releaseCancelledOutputLock(lock.file, lock.owner); }
+          catch (e) { return reject(e); }
+        }
+      }
       code === 0 && !signal.aborted ? resolve() : reject(new Error(`task ${task.id} exited ${code ?? terminationSignal}; see ${logFile}`));
     });
   });

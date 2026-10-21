@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { initFilm, checkFilm } from '../src/film.mjs';
 import { createSnapshot } from '../src/snapshot.mjs';
-import { checkNarration, narrationItems } from '../src/narration-check.mjs';
+import { checkNarration, narrationItems, COMPARATOR_VERSION } from '../src/narration-check.mjs';
 
 // Integration uses generated local audio and prefilled mock recognition evidence.
 // MOTION_USE_ASR=off prevents model downloads and external recognition calls.
@@ -91,5 +91,5 @@ test('snapshot replay freezes ASR model and parameters over project, CLI and env
   assert.equal(r.status,1,r.stdout+r.stderr);
   const result=JSON.parse(r.stdout);
   assert.equal(result.narration_check.status,'SKIPPED');
-  assert.deepEqual(result.narration_check.config,frozen);
+  assert.deepEqual(result.narration_check.config,{...frozen,comparatorVersion:COMPARATOR_VERSION});
 });

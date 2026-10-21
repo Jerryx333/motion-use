@@ -17,6 +17,7 @@ const LATIN = /[a-z0-9]/;
  * Each token keeps whether it was written as an acronym (2–6 capitals).
  */
 export function tokenize(text, lang) {
+  text = normalizeNumbers(text);
   const cjkText = lang?.startsWith("zh") || lang?.startsWith("ja") || CJK.test(text);
   const tokens = [];
   if (cjkText) {
@@ -28,14 +29,16 @@ export function tokenize(text, lang) {
       if (latin) tokens.push({ t: latin, latin: true, acronym: /^[A-Z]{2,6}$/.test(raw) });
       latin = raw = "";
     };
-    for (const ch of s) {
+    const textChars = [...s];
+    for (const [index, ch] of textChars.entries()) {
       if (CJK.test(ch)) {
         flush();
         tokens.push({ t: ch, latin: false });
       } else if (/[\p{L}\p{N}]/u.test(ch)) {
         latin += ch.toLowerCase();
         raw += ch;
-      } else if (/[-.'’·]/.test(ch) && latin) continue; // A-A-I, A.I.
+      } else if (ch === "." && /^\d+$/.test(latin) && /[0-9]/.test(textChars[index + 1] ?? "")) { latin += ch; raw += ch; }
+      else if (/[-.'’·]/.test(ch) && latin) continue; // A-A-I, A.I.
       else flush();
     }
     flush();
@@ -123,13 +126,20 @@ export function chineseNumber(s) {
   return total + section + num;
 }
 
-export const COMPARATOR_VERSION = "2";
+export const COMPARATOR_VERSION = "3";
+
+function normalizeNumbers(text) {
+  return String(text).normalize("NFKC").replace(/[零〇一二两三四五六七八九十百千万亿]+点[零〇一二三四五六七八九]+/g, (value) => {
+    const [whole, fraction] = value.split("点");
+    return fraction === undefined ? String(chineseNumber(whole)) : `${chineseNumber(whole)}.${[...fraction].map((c) => CN_DIGITS[c]).join("")}`;
+  });
+}
 
 // Keep quantities, operations and negation separate. A recognizer's "56" is never
 // interpreted as "5 是 6", and homophone tolerance cannot erase a minus or a 不.
 export function mathSignature(text, lang) {
   // Preserve ASCII arithmetic without treating acronym hyphens (A-A-I) as minus.
-  const s = text.normalize("NFKC").toLowerCase()
+  const s = normalizeNumbers(text).toLowerCase()
     .replace(/([0-9零〇一二两三四五六七八九十百千万亿])\s*([-*/])\s*(?=[0-9零〇一二两三四五六七八九十百千万亿])/g,
       (_, left, op) => left + ({ "-": "减", "*": "乘", "/": "除" })[op])
     .replace(/(^|[=:(，。,：])\s*-\s*(?=\d)/g, "$1负");
@@ -172,10 +182,12 @@ export function compareNarration(script, heard, lang, { chars = {}, tones = {}, 
     if (expText === gotText) {
       change.kind = "spelling"; // "API" heard as "A P I": the same letters
       change.flag = false;
-    } else if (exp.length && got.length && CN_NUMBER.test(expText) && got.every((x) => /^\d+$/.test(x.t))) {
+    } else if (exp.length && got.length &&
+      (CN_NUMBER.test(expText) || /^\d+(?:\.\d+)?$/.test(expText)) &&
+      (CN_NUMBER.test(gotText) || /^\d+(?:\.\d+)?$/.test(gotText))) {
       // 两百六十八 written as 268 by the recognizer: the same number, unless the values differ.
       change.kind = "number";
-      change.flag = chineseNumber(expText) !== Number(gotText);
+      change.flag = (CN_NUMBER.test(expText) ? chineseNumber(expText) : Number(expText)) !== (CN_NUMBER.test(gotText) ? chineseNumber(gotText) : Number(gotText));
     } else if ([...exp, ...got].some((x) => x.latin)) {
       const acronym = exp.some((x) => x.acronym);
       change.kind = acronym ? "acronym" : "latin";
@@ -233,7 +245,21 @@ export function compareNarration(script, heard, lang, { chars = {}, tones = {}, 
   // Edit cost per changed run; a spelled-out acronym costs nothing.
   const cost = changes.reduce((s, c) => s + c.cost, 0);
   for (const c of changes) delete c.cost;
-  const expectedMath = mathSignature(script, lang), heardMath = mathSignature(heard, lang);
+  // A single numeral substituted for a nonnumeric CJK character inside a word
+  // (后羿 → 后一) is a lexical uncertainty. It remains flagged below as a word;
+  // do not invent a quantity from it. Actual source numbers/operators stay protected.
+  let mathHeard = normalizeNumbers(heard).toLowerCase();
+  ops.forEach((o, i) => {
+    const lexical = o.op === "~" && CJK.test(o.a?.t ?? "") && !mathSignature(o.a.t, lang).length && /^[0-9零〇一二两三四五六七八九]$/.test(o.b?.t ?? "") &&
+      [ops[i - 1], ops[i + 1]].some((p) => p?.op === "=" && CJK.test(p.a.t)) &&
+      !/^[个只位次秒分年天月日百千万亿点加减乘除等]$/.test(ops[i + 1]?.b?.t ?? "");
+    if (lexical) {
+      const previous = ops[i - 1]?.op === "=" && CJK.test(ops[i - 1].b.t) ? ops[i - 1].b.t : "";
+      const next = ops[i + 1]?.op === "=" && CJK.test(ops[i + 1].b.t) ? ops[i + 1].b.t : "";
+      mathHeard = mathHeard.replace(previous + o.b.t + next, previous + o.a.t + next);
+    }
+  });
+  const expectedMath = mathSignature(script, lang), heardMath = mathSignature(mathHeard, lang);
   if (JSON.stringify(expectedMath) !== JSON.stringify(heardMath)) {
     changes.push({ expected: expectedMath.join(" "), heard: heardMath.join(" "), kind: "math", flag: true });
   }
@@ -276,7 +302,7 @@ export function resolveNarrationCheckConfig(project = {}, overrides = {}, env = 
   };
   const supplied = Object.hasOwn(project, "narrationCheck") ? project.narrationCheck : project.narrationConfig?.check;
   const cfg = supplied === undefined ? {} : object(supplied, "narrationCheck");
-  const allowedConfig = new Set(["model", "fallbackModel", "params"]);
+  const allowedConfig = new Set(["model", "fallbackModel", "params", "terms"]);
   for (const key of Object.keys(cfg)) if (!allowedConfig.has(key)) throw new Error(`unsupported narrationCheck option: ${key}`);
   if (Object.hasOwn(cfg, "params")) object(cfg.params, "narrationCheck.params");
   if (Object.hasOwn(overrides, "params")) object(overrides.params, "narrationCheck.params");
@@ -286,6 +312,11 @@ export function resolveNarrationCheckConfig(project = {}, overrides = {}, env = 
     params: { beam_size: 5, vad_filter: false, condition_on_previous_text: false, ...(cfg.params ?? {}), ...(overrides.params ?? {}) },
     comparatorVersion: COMPARATOR_VERSION,
   };
+  const terms = overrides.terms ?? cfg.terms;
+  if (terms !== undefined) {
+    if (!Array.isArray(terms) || terms.length > 100 || terms.some((t) => typeof t !== "string" || !t.trim() || t.length > 80 || /[\r\n]/.test(t))) throw new Error("narrationCheck.terms: at most 100 nonempty proper names, up to 80 characters each");
+    out.terms = [...new Set(terms)];
+  }
   for (const key of ["model", "fallbackModel"]) if (out[key] !== null && (typeof out[key] !== "string" || !out[key].trim())) throw new Error(`narrationCheck.${key} must be a nonempty model name`);
   const allowed = new Set(["beam_size", "vad_filter", "condition_on_previous_text", "temperature"]);
   for (const [key, value] of Object.entries(out.params)) {
@@ -318,7 +349,7 @@ export function checkNarration(items, options = {}) {
     else cache.legacy = old;
   } catch {}
   const hashes = new Map(items.map((it) => [it.file, sha(it.file)]));
-  const key = (it, selected) => asrCacheKey(hashes.get(it.file), selected, it.lang, params);
+  const key = (it, selected) => asrCacheKey(hashes.get(it.file), selected, it.lang, { ...params, ...(config.terms?.length ? { terms: config.terms } : {}) });
   const missingTranscripts = new Set(), writtenKeys = new Set();
   const persist = () => {
     if (!cacheFile) return;
@@ -364,7 +395,7 @@ export function checkNarration(items, options = {}) {
     });
     if (!todo.length) return null;
     log(`narration check: transcribing ${todo.length} clip(s) with whisper ${selected}…`);
-    const res = run({ model: selected, params, items: todo.map((it) => ({ file: it.file, lang: it.lang })), texts: items.map((it) => it.text) });
+    const res = run({ model: selected, params, ...(config.terms ? { terms: config.terms } : {}), items: todo.map((it) => ({ file: it.file, lang: it.lang })), texts: items.map((it) => it.text) });
     if (res.skipped) return res.skipped;
     for (const it of todo) {
       const got = res.items?.find((x) => x.file === it.file);

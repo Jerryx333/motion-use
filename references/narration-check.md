@@ -43,9 +43,9 @@ The static narration review HTML shows the script, model attempts, differences, 
 
 ## Mathematical boundaries
 
-The comparator independently checks number values, mathematical operations and negation. It tolerates Chinese-versus-Arabic notation for equal values, such as `一加五是六` and `1加5是6`. It keeps `1加56` flagged: recognition has not preserved the boundary between `5` and `6`. A dropped `不`, changed quantity, or changed plus/minus remains flagged even in a long otherwise matching sentence. Homophone tolerance cannot erase those differences; `6减` versus `六简` still needs review or a better transcript.
+The comparator independently checks number values, mathematical operations and negation. It tolerates Chinese-versus-Arabic notation for equal values, such as `一加五是六` and `1加5是6`, or `一点一三` and `1.13`. A numeral replacing a single nonnumeric character inside a word (`后羿` heard as `后一`) remains a lexical/phonetic difference, rather than inventing a math quantity; it is not automatically approved. It keeps `1加56` flagged: recognition has not preserved the boundary between `5` and `6`. A dropped `不`, changed quantity, or changed plus/minus remains flagged even in a long otherwise matching sentence. Homophone tolerance cannot erase those differences; `6减` versus `六简` still needs review or a better transcript.
 
-This is a conservative lexical structure check, not a mathematical parser or proof checker. Ambiguous recognition is deliberately retained as a difference. Fractions, mixed numeral systems, decimal words, alternate formulations and longer equations may need review. The checker does not solve the question, establish equivalence of alternative derivations, or verify that animation objects match the spoken quantities. The fallback can reduce ASR uncertainty but cannot replace checking the audio or the teaching material.
+This is a conservative lexical structure check, not a mathematical parser or proof checker. Ambiguous recognition is deliberately retained as a difference. Fractions, mixed numeral systems, alternate formulations and longer equations may need review. The checker does not solve the question, establish equivalence of alternative derivations, or verify that animation objects match the spoken quantities. The fallback can reduce ASR uncertainty but cannot replace checking the audio or the teaching material.
 
 The regression cases are transcript fixtures from the reported course feedback plus deliberately wrong numbers, operations and negation. They are not the original recordings and do not demonstrate that a particular recording was spoken correctly.
 
@@ -58,3 +58,11 @@ Reports include `cache.hits` and `cache.misses`, counting requested clip/model e
 Legacy cache entries are retained as evidence but are not reused under the stronger key contract. An explicit refresh runs recognition again. A missing transcript in that refresh is `UNREVIEWED`, even if an older successful cache record exists.
 
 Concurrent commands acquire a short exclusive cache-write lock, reread the newest cache, merge only their new records and atomically rename a complete replacement. Recognition runs outside the lock. A writer waits at most five seconds for `.motion-use-asr.json.lock`; it then fails with the lock path rather than overwrite another writer. A process killed during this short write may leave a stale lock: verify that its recorded process is no longer active before removing it. The lock is never automatically reclaimed from a potentially active writer.
+
+
+Optional `narrationCheck.terms: ["后羿", "嫦娥"]` supplies up to 100 proper-name
+hints (80 characters each) in Whisper's initial prompt. Supply names, not entire
+scripts or expected answers. Hints participate in the transcript cache key and
+remain in report config; changing them triggers recognition again. They do not
+whitelist substitutions, wrong quantities or missing negation, and do not create
+human listening evidence.

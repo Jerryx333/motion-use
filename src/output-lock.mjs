@@ -23,8 +23,24 @@ export function acquireOutputLock(out) {
   }
   try { fs.writeFileSync(fd, JSON.stringify(owner) + "\n"); }
   finally { fs.closeSync(fd); }
+  if (process.send && process.env.MOTION_USE_BATCH_LOCK_TOKEN)
+    process.send({ type: "motion-use-output-lock", token: process.env.MOTION_USE_BATCH_LOCK_TOKEN, file, owner });
   return () => {
     try { if (JSON.parse(fs.readFileSync(file, "utf8")).run === owner.run) fs.unlinkSync(file); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
   };
+}
+
+// Only a batch supervisor that witnessed creation may clean a cancelled built-in
+// child's lock. Call after the child and its entire process group have exited.
+export function releaseCancelledOutputLock(file, owner) {
+  if (owner.host !== os.hostname()) return false;
+  try { process.kill(owner.pid, 0); return false; } catch (e) { if (e.code !== "ESRCH") return false; }
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return false;
+    const current = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (current.run !== owner.run || current.pid !== owner.pid || current.host !== owner.host) return false;
+    fs.unlinkSync(file);
+    return true;
+  } catch (e) { if (e.code === "ENOENT") return false; throw e; }
 }

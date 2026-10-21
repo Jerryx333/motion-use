@@ -73,7 +73,7 @@ function makeHelpers(film, instruments) {
   const shot = (id) => {
     const s = shots[id];
     if (!s) throw new Error(`score: no shot "${id}" (shots: ${Object.keys(shots).join(", ")})`);
-    return { start: s.start, end: s.end, dur: s.end - s.start };
+    return { start: s.start, end: s.end, dur: s.end - s.start, authoredDuration: s.authoredDuration };
   };
   const level = (t) => {
     const a = state.arc;
@@ -98,8 +98,9 @@ function makeHelpers(film, instruments) {
     beats: (n = 1) => (n * 60) / state.tempo,
     bars: (n = 1) => (n * state.meter * 60) / state.tempo,
     shot,
-    at: (id, offset = 0) => shot(id).start + offset,
-    end: (id, offset = 0) => shot(id).end + offset,
+    has: (id) => Object.hasOwn(shots, id),
+    at: (id, offset = 0) => { const s = shot(id); return s.start + offset * (s.authoredDuration ? s.dur / s.authoredDuration : 1); },
+    end: (id, offset = 0) => { const s = shot(id); return s.end + offset * (s.authoredDuration ? s.dur / s.authoredDuration : 1); },
     /** Narration windows [{start, end}] in film seconds: leave them room. */
     voice: film.voice ?? [],
     speaking: (t) => (film.voice ?? []).some((w) => t >= w.start && t < w.end),
