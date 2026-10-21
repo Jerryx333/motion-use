@@ -1,6 +1,6 @@
 {
   "name": "motion-use",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Direct local films with an agent: a drawing kit (camera, charts, captions, footage), exact-time rendering, narration and delivered-video checks. Built on HyperFrames.",
   "author": {
     "name": "leeguooooo"
