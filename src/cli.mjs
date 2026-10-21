@@ -385,7 +385,7 @@ async function init(o, [input]) {
     if (o.json) console.log(JSON.stringify(result, null, 2));
     else
       console.log(
-        `wrote ${result.film}\nnext: edit DIRECTOR.md, film.json and composition/draw.js; motion-use still ${result.film} --allow-code`,
+        `wrote ${result.film}\nnext: review SCRIPT.md and SOURCES.md, then edit DIRECTOR.md, film.json and composition/draw.js; motion-use still ${result.film} --allow-code`,
       );
     return 0;
   }

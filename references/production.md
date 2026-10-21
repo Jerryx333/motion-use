@@ -32,6 +32,13 @@ capture command with the footage. Use a local PNG image sequence directly in `vi
 instead of encoding an intermediate MP4 and extracting JPEGs. Use actual recordings where
 live behavior matters; label diagrams and fabricated UI as illustrations.
 
+For stock footage, photographs, BGM or SFX, use [asset-sourcing.md](asset-sourcing.md).
+Init creates `SOURCES.md` for shot needs, candidate comparison, selected local
+files, licence evidence and actual playback/listening coverage. Use chrome-use's
+available read-only site adapters for discovery, then inspect the provider's
+detail page and applicable terms. Choose the material before committing to a
+code-only route; an environment still does not provide the action of a full film.
+
 ## Compare directions cheaply
 
 When the direction is open, propose three different approaches to the same facts:

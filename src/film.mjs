@@ -818,9 +818,10 @@ export function initFilm(o, dir) {
   dir = path.resolve(dir);
   const target = path.join(dir, "film.json");
   const draw = path.join(dir, "composition", "draw.js"),
-    director = path.join(dir, "DIRECTOR.md");
+    director = path.join(dir, "DIRECTOR.md"),
+    sources = path.join(dir, "SOURCES.md");
   // Preflight every target before writing any file. Never erase custom drawing code on re-init.
-  for (const f of [target, draw, director, path.join(dir,"SCRIPT.md")])
+  for (const f of [target, draw, director, sources, path.join(dir,"SCRIPT.md")])
     if (fs.existsSync(f))
       throw new BriefError(
         `${f} already exists; choose a fresh project directory`,
@@ -869,8 +870,9 @@ export function initFilm(o, dir) {
     director,
   );
   fs.copyFileSync(path.join(ROOT,"templates","film","SCRIPT.md"),path.join(dir,"SCRIPT.md"));
+  fs.copyFileSync(path.join(ROOT,"templates","film","SOURCES.md"),sources);
   fs.mkdirSync(path.join(dir,"reviews"),{recursive:true});
-  return { ok: true, film: target, composition: draw, director, script:path.join(dir,"SCRIPT.md"), mode: "film" };
+  return { ok: true, film: target, composition: draw, director, sources, script:path.join(dir,"SCRIPT.md"), mode: "film" };
 }
 
 // Subtitles for the narration actually placed in this language: cues timed by the voice

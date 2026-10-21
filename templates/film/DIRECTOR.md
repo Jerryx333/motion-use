@@ -26,6 +26,7 @@ Slideshow pacing · copied demo · no concrete object · dead background or empt
 - Are short holds deliberate, and text readable at phone size?
 - Is the first second already interesting? Does the last beat pay off the opening?
 - Have source facts and footage provenance been checked?
+- Does SOURCES.md show why the selected footage/music fits the shot, the licence and local-file evidence, and what was actually watched or heard? Compare licensed tracks or an authored score; the starter score is not a musical decision.
 - Did `render` report any `narration_check` line or `text_check` run? Listen to each flagged clip; look at each reported time.
 - Is every file you hand over listed by `verify --manifest out/release/release-manifest.json`?
 

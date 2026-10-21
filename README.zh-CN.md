@@ -48,6 +48,8 @@ motion-use concat parts.json --out ./joined --release  # 长片分段拼接，�
 
 交接包是可导入剪辑软件的素材与时间表，不是剪映原生草稿。代码动效仍需烘焙到画面；无字幕开关只控制 `M.captions`，自绘文字与素材内文字保留。草稿会留在 `out/preview/`，交付检查失败也能回看。
 
+找素材和背景音乐也属于制作流程。新项目的 `SOURCES.md` 记录镜头需求、候选比较、原站许可、下载后的文件和实际试听情况。可用 chrome-use 的只读 `site` 适配器搜索，再到原站检查预览和下载；没有专用适配器时，用 `google/search` 限定站点找候选。配乐可选现成曲目或自写 `score.js`，按旁白和画面试听后决定。[素材与音乐工作流](references/asset-sourcing.md)。
+
 ## 导演模式（默认）
 
 选型可用 `catalog recommend --product-type developer-tool --material screenshot`，
@@ -128,7 +130,7 @@ brief 是一组场景：`title`、`terminal`、`steps`、`diagram`、`features`�
 - **真实素材。** `video` 场景播放你自己的录屏（可剪切、加速）；`image` 场景展示截图或用 [image-use](https://github.com/leeguooooo/image-use) 生成的插图。两者都能高亮一个区域（其余部分压暗）并放大。
 - **你的品牌。** 封面、片尾和（可选）每个场景上的 logo；带对比度检查的完整配色；你自己的字体，按每个视频用到的字裁剪，附带许可证。
 - **竖版安全区。** 9:16 的文字会避开点赞分享那一列和底部文案区。
-- **可复现，全本地。** 同一份 brief 渲染出同一个视频，逐位一致（软件渲染），录屏片段的帧可能有肉眼不可见的差异。动画是 CSS，由 [HyperFrames](https://github.com/heygen-com/hyperframes) 逐帧定位；字体随 motion-use 发布，并按每个视频用到的字裁剪；每条片子的配乐按题材单独写（`composition/score.js`），用 CC0 真实乐器演奏。渲染不从网络加载任何资源，引擎的统计上报已关闭（`HYPERFRAMES_NO_TELEMETRY`、`DO_NOT_TRACK`）。CLI 每天最多访问一次 GitHub 检查新版本，设置 `MOTION_USE_NO_UPDATE_CHECK=1` 可以关闭。
+- **可复现，全本地。** 同一份 brief 渲染出同一个视频，逐位一致（软件渲染），录屏片段的帧可能有肉眼不可见的差异。动画是 CSS，由 [HyperFrames](https://github.com/heygen-com/hyperframes) 逐帧定位；字体随 motion-use 发布，并按每个视频用到的字裁剪；配乐可用固定在项目里的本地曲目，也可按题材单独写 `composition/score.js`，用 CC0 真实乐器演奏。渲染不从网络加载任何资源，引擎的统计上报已关闭（`HYPERFRAMES_NO_TELEMETRY`、`DO_NOT_TRACK`）。CLI 每天最多访问一次 GitHub 检查新版本，设置 `MOTION_USE_NO_UPDATE_CHECK=1` 可以关闭。
 - **不信任的文字也安全。** brief 里的文字始终当作文字绘制，不当 HTML。模板不够用时可以写自定义 HTML 场景，但必须加 `--allow-custom-html` 才会渲染。motion-use 不会覆盖不是它写出的输出文件（`--force` 可以强制覆盖）。
 
 ## 环境要求
