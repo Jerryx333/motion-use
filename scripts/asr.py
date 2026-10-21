@@ -31,10 +31,11 @@ for it in req["items"]:
     segments, _ = model.transcribe(
         np.frombuffer(pcm, dtype=np.float32),
         language=lang,
-        beam_size=5,
-        vad_filter=False,
-        condition_on_previous_text=False,
-        initial_prompt=PROMPTS.get(lang),
+        **{
+            "beam_size": 5, "vad_filter": False, "condition_on_previous_text": False,
+            **req.get("params", {}),
+        },
+        initial_prompt=" ".join(filter(None, [PROMPTS.get(lang), ", ".join(req.get("terms", []))])) or None,
     )
     items.append({"file": it["file"], "text": "".join(s.text for s in segments).strip()})
 

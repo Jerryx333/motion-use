@@ -50,6 +50,14 @@ motion-use concat parts.json --out ./joined --release  # 长片分段拼接，�
 
 ## 导演模式（默认）
 
+选型可用 `catalog recommend --product-type developer-tool --material screenshot`，
+结果给出适用条件和理由。整片强弱变化可写入可选的 `film.json.rhythm`，再用
+`motion-use rhythm <film> --json` 检查；画面和配乐可共用节奏事件时间。
+`review page` 可生成离线单帧批注页：点位置、写意见、导出 JSON 后交给 Agent
+导入，记录绑定截图和源码版本，支持处理与重开。
+见[节奏单](references/rhythm.md)、[选型](references/catalog-selection.md)和
+[单帧批注](references/frame-review.md)。计划与处理记录不代表视觉或听审通过。
+
 ```bash
 motion-use init my-film --name my-product --lang zh,en --format landscape,vertical \
   --subject "纸船记账 App" --purpose "App Store 预览视频" --tone "安静、利落" --length 30
@@ -173,3 +181,13 @@ still/render 会立即报错。子命令支持 `--help`。
 旁白可分开 `say/text`，字幕可按句、镜头或原始 cue 分组。素材支持无损图片序列、
 镜头相对时间及首尾帧停留。报告增加逐镜头运动诊断，选定静帧只检查附近的文字。
 接口细节见[影片契约](references/film.md)。
+
+批量课程制作：[任务恢复、旁白审核、章节与交付流程](references/course-workflow.md)。
+
+
+单片支持 1–3600 秒，native 连续输出画面，配乐整片生成一次。draft 的运动红灯
+保留为警告；standard/high、release 和显式 gate 仍执行门槛。
+`retime --keep-captions` 可平移镜头内字幕，超出新窗口时报错。
+整体提速可设置 `pace:1.25`，重新生成旁白再 retime；镜头编排使用
+`M.shotTime(t,id)`，配合 `authoredDuration` 或 `retime --scale-timing`。
+装饰文字用 `M.texture(c,ctx=>{...})`，普通文字继续检查。

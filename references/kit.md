@@ -80,3 +80,23 @@ Look at an image only when the numbers do not settle the question. A `demo_simil
 - [examples/kinetic](../examples/kinetic/): one heavy word per beat, flat colour chapters, a stroke that crosses out the last word.
 
 The production workflow, preview directions, style/shot gallery, speech timing and layered editing handoff are in [production.md](production.md). For frame timing from actual narration use `retime`; for measured Azure word boundaries use `voiceover --word-timing`. Catalogue studies are intentionally silent.
+
+
+For text used as decoration or texture, wrap the synchronous drawing in
+`M.texture(c, ctx => { ctx.fillText(...); })`. It draws normally and excludes only
+that scope from clipping, collision, contrast and reading checks. Use ordinary
+text calls for information the viewer must read. An OffscreenCanvas texture
+composited with drawImage is also supported. Exact same-font, same-baseline
+substring colour repaints are recognized as highlights; displaced text still
+collides. Prefer separate prefix/highlight/suffix draws for complex alignment.
+
+Use `M.shotTime(t, id)` for shot-local choreography that follows retime. With a
+shot `authoredDuration`, it returns authored seconds; without one, actual local
+seconds. `retime --scale-timing` records the original durations. See film.md for
+`pace`, speech regeneration and matching score offsets.
+
+`M.rhythmEvent(id)` reads an event's absolute output second from the optional
+`film.json.rhythm` plan; `M.rhythmPhase(id)` reads its declared phase. Score helpers
+use the same names, so a picture event and musical accent share one anchor.
+Missing IDs throw. These declarations do not prove the event was drawn or heard;
+see [rhythm.md](rhythm.md).

@@ -3,6 +3,27 @@
 // alchaincyf/huashu-art-motion (MIT, scripts/engine/lib). The runtime only adds names that
 // do not already exist on `motion`, so older drawing code keeps its exact behavior.
 window.__filmKit = function (view, film) {
+  // Only decorative text is exempt. try/finally restores nested scopes even on errors.
+  function decorativeTexture(c, draw) {
+    const previous = c.__motionUseTexture;
+    c.__motionUseTexture = true;
+    try { return draw(c); } finally { c.__motionUseTexture = previous; }
+  }
+  function shotTime(t, id) {
+    const s = id === undefined ? film.shots.find((s) => t >= s.start && t < s.end) : film.shots.find((s) => s.id === id);
+    if (!s) throw new Error(`shotTime: no shot ${id ?? "at " + t}`);
+    return (t - s.start) * ((s.authoredDuration ?? (s.end - s.start)) / (s.end - s.start));
+  }
+  function rhythmPhase(id) {
+    const phase = film.rhythm?.phases?.find((p) => p.id === id);
+    if (!phase) throw new Error(`rhythmPhase: no declared phase ${id}`);
+    return { ...phase, ...(phase.shots ? { shots: [...phase.shots] } : {}) };
+  }
+  function rhythmEvent(id) {
+    const event = film.rhythm?.events?.find((e) => e.id === id);
+    if (!event) throw new Error(`rhythmEvent: no declared event ${id}`);
+    return event.at;
+  }
   const clamp = (x) => Math.max(0, Math.min(1, x));
   const lerp = (a, b, p) => a + (b - a) * p;
   const bezier = (x1, y1, x2, y2) => (x) => {
@@ -324,7 +345,9 @@ window.__filmKit = function (view, film) {
 
   // Static paper/grain textures are painted once per key, then reused every frame.
   const cache = new Map();
-  function texture(key, { base = "#F3EDE2", amount = 18, grain = 10, scale = 0.004, seed = 7 } = {}) {
+  function texture(key, options = {}) {
+    if (typeof options === "function") return decorativeTexture(key, options);
+    const { base = "#F3EDE2", amount = 18, grain = 10, scale = 0.004, seed = 7 } = options;
     if (cache.has(key)) return cache.get(key);
     const w = Math.ceil(view.width / 2),
       h = Math.ceil(view.height / 2),
@@ -917,6 +940,9 @@ window.__filmKit = function (view, film) {
   }
 
   return {
+    shotTime,
+    rhythmPhase,
+    rhythmEvent,
     easings,
     bezier,
     tween: (t, start, dur, e = "cubicInOut") => easeOf(e)((t - start) / dur),

@@ -12,16 +12,57 @@ export const SCENE_TYPES = ["title", "terminal", "steps", "diagram", "features",
  * Problems in a custom HTML scene that break the rules every other scene keeps: no network,
  * and the same picture for the same frame on every render. Returns [{rule, match}].
  */
-export function lintCustomHtml(src) {
+// Keep executable template interpolations while masking quoted display copy and
+// comments. This is lint, not a sandbox; the page's CSP enforces local resources.
+function executableSource(source) {
+  let i = 0;
+  const literals = [];
+  const scan = (closing = false) => {
+    let out = "", depth = 0;
+    while (i < source.length) {
+      const c = source[i], next = source[i + 1];
+      if (c === "/" && next === "/") { while (i < source.length && source[i] !== "\n") i++; out += " "; continue; }
+      if (c === "/" && next === "*") { i += 2; while (i < source.length && source.slice(i, i + 2) !== "*/") i++; i += 2; out += " "; continue; }
+      if (c === "'" || c === '"' || c === "`") {
+        const quote = c, before = out.slice(-120); i++;
+        const start = i;
+        while (i < source.length) {
+          if (source[i] === "\\") { i += 2; continue; }
+          if (source[i] === quote) { literals.push({ before, text: source.slice(start, i) }); i++; break; }
+          if (quote === "`" && source.slice(i, i + 2) === "${") { i += 2; out += " " + scan(true) + " "; continue; }
+          i++;
+        }
+        out += " "; continue;
+      }
+      i++;
+      if (closing && c === "}" && depth-- === 0) break;
+      if (c === "{") depth++;
+      out += c;
+    }
+    return out;
+  };
+  return { code: scan(), literals };
+}
+
+export function lintCustomHtml(src, { javascript = false } = {}) {
+  src = src.replace(/<!--[\s\S]*?-->/g, "");
+  const { code, literals } = executableSource(javascript ? src : [...src.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map((m) => m[1]).join("\n") || src);
   const RULES = [
-    ["network", /\b(?:https?:)?\/\/[\w.-]+\.[a-z]{2,}/gi],
     ["network", /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|navigator\.sendBeacon)\b/g],
+    ["network", /\bimport\s*\(/g],
     ["nondeterministic", /\b(?:Date\.now|new\s+Date|performance\.now|Math\.random|crypto\.getRandomValues)\b/g],
     ["nondeterministic", /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback)\b/g],
-    ["structure", /<\s*\/?\s*(?:html|head|body|base|meta|iframe|frame|object|embed)\b/gi],
   ];
   const out = [];
-  for (const [rule, re] of RULES) for (const m of src.matchAll(re)) out.push({ rule, match: m[0] });
+  for (const [rule, re] of RULES) for (const m of code.matchAll(re)) out.push({ rule, match: m[0] });
+  // Resource sinks still reject remote literal URLs, including Image.src and CSS url().
+  for (const literal of literals) if (/^(?:https?:)?\/\//i.test(literal.text) && /(?:\.src\s*=|\bimport|\bfrom|\b(?:fetch|WebSocket|EventSource)\s*\(|\.open\s*\([^,]*,)\s*$/.test(literal.before))
+    out.push({ rule: "network", match: literal.text });
+  if (!javascript) {
+    const markup = src.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of markup.matchAll(/\b(?:src|href|srcset)\s*=\s*["'](?:https?:)?\/\/[^"'\s]+|\burl\(\s*["']?(?:https?:)?\/\/[^\s)"']+/gi)) out.push({ rule: "network", match: m[0] });
+  }
+  if (!javascript) for (const m of src.matchAll(/<\s*\/?\s*(?:html|head|body|base|meta|iframe|frame|object|embed)\b/gi)) out.push({rule:"structure",match:m[0]});
   return out;
 }
 export const TRANSITIONS = ["fade", "slide", "wipe", "zoom", "cut"];

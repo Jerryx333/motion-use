@@ -20,6 +20,8 @@ motion-use's own code is MIT (see `LICENSE`). Everything else it ships or instal
 
 `assets/demo-signatures.json` holds 12×8 frame descriptors of the starter and OCS example renders (made by `scripts/demo-signatures.mjs` from this repository's own output, MIT), used only to flag films laid out like the demos.
 
+Whole-film rhythm planning, explicit product/material catalog selection and location-bearing frame feedback are informed by [alchaincyf/huashu-motion](https://github.com/alchaincyf/huashu-motion/tree/5f2608c2e12abcf518f74dde86093b19f7f88603) (commit `5f2608c`, MIT, Copyright (c) 2026 Huashu). Their schemas, CLI, drawing/score anchors and offline review page are original motion-use implementations. No upstream runtime, prompts, characters, fonts or media are bundled by these additions.
+
 Built-in background beds are not files: `src/music.mjs` synthesizes them to the exact length of each video. A film's own music is written as `composition/score.js` and played by `src/sampler.mjs` (the reverb follows Jezar's public-domain Freeverb design) with the synthesized voices there and the instrument pack below.
 
 ## In rendered projects and videos

@@ -26,6 +26,8 @@ jobs:
       - run: npm test
       - run: node scripts/licenses.mjs > /dev/null
       - run: node bin/motion-use.mjs doctor --install-browser
+      - name: offline frame review interaction
+        run: MOTION_USE_REQUIRE_REVIEW_BROWSER=1 node --test --test-name-pattern="offline frame page" test/directing-review.test.mjs
       # A real render on every platform: fonts, ffmpeg and Chrome differ between them.
       - name: render smoke test
         run: |

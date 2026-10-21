@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initFilm } from "./film.mjs";
 import { esc } from "./html.mjs";
+import { fitForCard, recommendCards } from "./catalog-fit.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const card = (
@@ -24,6 +25,7 @@ const card = (
   mechanism,
   pitfalls,
   parameters,
+  fit: fitForCard(id),
   duration: 6,
   implementation: "src/catalog-study.js",
   preview:
@@ -200,6 +202,8 @@ export function catalog(kind, id) {
   return [found];
 }
 
+export const recommendCatalog = (options) => recommendCards(CARDS, options);
+
 // All exporting commands use a fresh directory. No --force removes someone else's work.
 export function freshDirectory(dir) {
   const out = path.resolve(dir);
@@ -223,7 +227,7 @@ export function writeGallery(dir, cards = CARDS) {
   const tiles = cards
     .map(
       (c) =>
-        `<article data-kind="${c.kind}"><canvas width="960" height="540" data-study="${c.id}" aria-label="${esc(c.title)} motion study"></canvas><h2>${esc(c.title)}</h2><p>${esc(c.use)}</p><details><summary>Mechanism, parameters & limits</summary><p>${esc(c.mechanism)}</p><pre>${esc(JSON.stringify(c.parameters, null, 2))}</pre><ul>${c.pitfalls.map((p) => `<li>${esc(p)}</li>`).join("")}</ul><p>${esc(c.preview)}</p><code>motion-use study ${c.id} ./study-${c.id}</code></details></article>`,
+        `<article data-kind="${c.kind}"><canvas width="960" height="540" data-study="${c.id}" aria-label="${esc(c.title)} motion study"></canvas><h2>${esc(c.title)}</h2><p>${esc(c.use)}</p><details><summary>Selection, mechanism, parameters & limits</summary><p>${esc(c.fit.chooseWhen)}</p><p>Product: ${esc(c.fit.productTypes.join(", "))}<br>Material: ${esc(c.fit.materials.join(", "))}<br>Basis: authored guidance; the study is illustrative.</p><p>${esc(c.mechanism)}</p><pre>${esc(JSON.stringify(c.parameters, null, 2))}</pre><ul>${c.pitfalls.map((p) => `<li>${esc(p)}</li>`).join("")}</ul><p>${esc(c.preview)}</p><code>motion-use study ${c.id} ./study-${c.id}</code></details></article>`,
     )
     .join("\n");
   fs.writeFileSync(

@@ -32,6 +32,32 @@ const ff = (args) =>
     maxBuffer: 16 * 1024 * 1024,
   });
 
+// Read the video timeline independently of format.duration, which may include AAC padding.
+function videoTimeline(file, decode = false) {
+  const read = (count) => JSON.parse(execFileSync("ffprobe", [
+    "-v", "error", "-select_streams", "v:0", ...(count ? ["-count_frames"] : []),
+    "-show_entries", "stream=r_frame_rate,avg_frame_rate,nb_frames,nb_read_frames", "-of", "json", file,
+  ], { encoding: "utf8" })).streams?.[0];
+  let v = read(decode);
+  if (!decode && !Number.isSafeInteger(Number(v?.nb_frames))) {
+    v = read(true);
+    decode = true;
+  }
+  const [numerator, denominator] = (v?.r_frame_rate ?? "0/1").split("/").map(Number);
+  const frames = Number(decode ? v?.nb_read_frames : v?.nb_frames ?? v?.nb_read_frames), fps = numerator / denominator;
+  if (!Number.isSafeInteger(frames) || frames < 1 || !Number.isFinite(fps) || fps <= 0)
+    throw new Error(`${file}: cannot establish video frame timeline`);
+  const [an, ad] = (v.avg_frame_rate ?? "0/1").split("/").map(Number);
+  if (ad && an && Math.abs(an / ad - fps) > 1e-6)
+    throw new Error(`${file}: variable frame rate is unsupported; render constant frame rate first`);
+  return { frames, fps, numerator, denominator };
+}
+const clock = (seconds, separator = ".") => {
+  const ms = Math.round(seconds * 1000);
+  return `${String(Math.floor(ms / 3600000)).padStart(2, "0")}:${String(Math.floor(ms / 60000) % 60).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}${separator}${String(ms % 1000).padStart(3, "0")}`;
+};
+const metadataText = (value) => String(value).replace(/([\\=;#])/g, "\\$1").replace(/\r?\n/g, " ");
+
 export function concatParts(configFile, options = {}) {
   const base = path.dirname(path.resolve(configFile)),
     config = JSON.parse(fs.readFileSync(configFile, "utf8"));
@@ -48,17 +74,21 @@ export function concatParts(configFile, options = {}) {
     if (!p || typeof p.file !== "string")
       throw new Error("concat part needs a file");
     const file = path.resolve(base, p.file),
-      facts = probeMedia(file);
+      facts = probeMedia(file),
+      timeline = videoTimeline(file);
+    facts.fps = timeline.fps;
     if (!facts.width || !facts.height || !Number.isFinite(facts.fps) || facts.fps <= 0)
       throw new Error(`${p.file}: a video stream with dimensions and frame rate is required`);
+    if (p.title !== undefined && (typeof p.title !== "string" || !p.title.trim() || /[\r\n]/.test(p.title)))
+      throw new Error(`${p.file}: title must be a nonempty single line`);
     const from = p.from ?? 0,
-      to = p.to ?? facts.duration;
+      to = p.to ?? timeline.frames / timeline.fps;
     if (
       !Number.isFinite(from) ||
       !Number.isFinite(to) ||
       from < 0 ||
       to <= from ||
-      to > facts.duration + 0.01
+      to > timeline.frames / timeline.fps + 1e-6
     )
       throw new Error(`${p.file}: invalid source range`);
     let snapshot = null,
@@ -75,7 +105,12 @@ export function concatParts(configFile, options = {}) {
       facts,
       from,
       to,
-      length: Math.round((to - from) * facts.fps) / facts.fps,
+      timeline,
+      title: p.title ?? null,
+      source: p.source ?? null,
+      startFrame: Math.round(from * timeline.fps),
+      frames: Math.round(to * timeline.fps) - Math.round(from * timeline.fps),
+      length: (Math.round(to * timeline.fps) - Math.round(from * timeline.fps)) / timeline.fps,
       sha256: hash(file),
       snapshot,
       manifestHash,
@@ -104,12 +139,12 @@ export function concatParts(configFile, options = {}) {
   const withAudio = parts.some((p) => p.facts.audio);
   parts.forEach((p, i) => {
     filters.push(
-      `[${i}:v]trim=start=${p.from}:duration=${p.length},setpts=PTS-STARTPTS,setsar=1[v${i}]`,
+      `[${i}:v]trim=start_frame=${p.startFrame}:end_frame=${p.startFrame + p.frames},setpts=N/(${first.fps}*TB),setsar=1[v${i}]`,
     );
     if (withAudio)
       filters.push(
         p.facts.audio
-          ? `[${i}:a]atrim=start=${p.from}:duration=${p.length},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${p.length}[a${i}]`
+          ? `[${i}:a]atrim=start=${p.startFrame / first.fps}:duration=${p.length},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${p.length}[a${i}]`
           : `anullsrc=r=48000:cl=stereo,atrim=duration=${p.length}[a${i}]`,
       );
   });
@@ -141,21 +176,55 @@ export function concatParts(configFile, options = {}) {
   const normalized = path.join(out, "normalized.mp4"),
     normalization = normalizeAudio(candidate, normalized);
   if (normalization.applied) fs.renameSync(normalized, candidate);
-  let duration = 0;
+  let frame = 0;
   const provenance = parts.map((p) => {
-    const start = duration;
-    duration += p.length;
+    const startFrame = frame;
+    frame += p.frames;
     return {
       file: path.basename(p.file),
       sha256: p.sha256,
       snapshot: p.snapshot,
       manifestSha256: p.manifestHash,
-      from: p.from,
-      to: p.from + p.length,
-      start,
-      end: duration,
+      source: p.source,
+      title: p.title,
+      requestedRange: { from: p.from, to: p.to },
+      from: p.startFrame / first.fps,
+      to: (p.startFrame + p.frames) / first.fps,
+      sourceStartFrame: p.startFrame,
+      frames: p.frames,
+      startFrame,
+      endFrame: frame,
+      start: startFrame / first.fps,
+      end: frame / first.fps,
     };
   });
+  const duration = frame / first.fps;
+  const chapters = provenance.map((p, i) => ({
+    index: i + 1, title: p.title ?? `Part ${i + 1}`,
+    startFrame: p.startFrame, endFrame: p.endFrame,
+    start: p.start, end: p.end,
+    source: { file: p.file, sha256: p.sha256, from: p.from, to: p.to, provenance: p.source },
+  }));
+  const embedded = config.chapters === true || parts.some((p) => p.title !== null);
+  if (embedded) {
+    const { numerator, denominator } = parts[0].timeline;
+    const metadata = path.join(out, "chapters.ffmetadata");
+    fs.writeFileSync(metadata, ";FFMETADATA1\n" + chapters.map((c) => `[CHAPTER]\nTIMEBASE=1/${numerator}\nSTART=${c.startFrame * denominator}\nEND=${c.endFrame * denominator}\ntitle=${metadataText(c.title)}\n`).join(""));
+    const chaptered = path.join(out, "chaptered.mp4");
+    ff(["-v", "error", "-i", candidate, "-i", metadata, "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", "-movflags", "+faststart", chaptered]);
+    fs.renameSync(chaptered, candidate);
+  }
+  const actual = videoTimeline(candidate, true);
+  if (actual.frames !== frame) throw new Error(`Joined video has ${actual.frames} frames; expected ${frame}`);
+  const containerDuration = probeMedia(candidate).duration;
+  const chapterFiles = {
+    json: path.join(out, "chapters.json"),
+    text: path.join(out, "chapters.txt"),
+    srt: path.join(out, "chapters.srt"),
+  };
+  fs.writeFileSync(chapterFiles.json, JSON.stringify({ schemaVersion: 1, name: config.name, fps: first.fps, frameRate: `${parts[0].timeline.numerator}/${parts[0].timeline.denominator}`, frames: frame, videoDuration: duration, containerDuration, embedded, chapters }, null, 2) + "\n");
+  fs.writeFileSync(chapterFiles.text, chapters.map((c) => `${clock(c.start)} – ${clock(c.end)}  ${c.title}`).join("\n") + "\n");
+  fs.writeFileSync(chapterFiles.srt, chapters.map((c) => `${c.index}\n${clock(c.start, ",")} --> ${clock(c.end, ",")}\n${c.title}\n`).join("\n"));
   const joins = provenance
     .slice(1)
     .map((p) => joinCheck(candidate, p.start, duration, withAudio));
@@ -188,10 +257,19 @@ export function concatParts(configFile, options = {}) {
     `${config.name}${verification.ok ? "" : "-failed"}.mp4`,
   );
   fs.renameSync(candidate, target);
+  for (const kind of Object.keys(chapterFiles)) {
+    const destination = path.join(dir, path.basename(chapterFiles[kind]));
+    fs.copyFileSync(chapterFiles[kind], destination);
+    chapterFiles[kind] = destination;
+  }
   const report = {
     ...verification,
     file: target,
     normalization,
+    videoDuration: duration,
+    containerDuration,
+    chapterFiles,
+    chaptersEmbedded: embedded,
     parts: provenance,
     joins,
     limitations: [
@@ -218,11 +296,13 @@ export function concatParts(configFile, options = {}) {
           lang: config.lang ?? "und",
           format: config.format ?? "custom",
         }),
+        ...Object.values(chapterFiles).map((file) => ({ file: path.basename(file), kind: "chapters", sha256: hash(file), bytes: fs.statSync(file).size })),
       ],
       snapshot: null,
       version: options.version,
       film: config.name,
     });
+    m.chapters = { ...Object.fromEntries(Object.entries(chapterFiles).map(([kind, file]) => [kind, path.basename(file)])), embedded };
     m.parts = provenance;
     m.joins = joins;
     manifest = path.join(dir, "release-manifest.json");
@@ -233,6 +313,10 @@ export function concatParts(configFile, options = {}) {
     file: target,
     report: verification.report,
     release_manifest: manifest,
+    videoDuration: duration,
+    containerDuration,
+    chapterFiles,
+    chaptersEmbedded: embedded,
     parts: provenance,
     joins,
   };

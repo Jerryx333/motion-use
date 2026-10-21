@@ -11,6 +11,11 @@ on:
     paths: ["native/**", ".github/workflows/native.yml", "src/film-runtime.js", "src/film-kit.js"]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+        default: ""
 jobs:
   build:
     strategy:
@@ -24,6 +29,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -70,7 +77,7 @@ jobs:
       - name: production and frame-boundary regressions
         env:
           MOTION_RENDER: ${{ github.workspace }}/native/target/release/motion-render
-        run: node --test test/issues-58-62.test.mjs test/production-feedback.test.mjs
+        run: node --test test/issues-58-62.test.mjs test/production-feedback.test.mjs test/issue-regressions.test.mjs test/directing-review.test.mjs
       - name: WebGL smoke test
         if: steps.angle.outputs.dir != ''
         env:

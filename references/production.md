@@ -62,6 +62,7 @@ Browse original motion-use mechanisms:
 
 ```bash
 motion-use catalog styles
+motion-use catalog recommend --product-type developer-tool --material screenshot --json
 motion-use catalog shots
 motion-use catalog shots parallax-tour --json
 motion-use catalog --out ./motion-gallery
@@ -75,6 +76,12 @@ The gallery and study projects use the same implementation (`src/catalog-study.j
 
 ## Speech drives time
 
+Before implementing every move, choose continuous, montage or hybrid and sketch
+the whole-film intensity changes. Optional `film.json.rhythm` turns that into
+validated phases, declared events and shared drawing/score anchors. Use
+`motion-use rhythm <film> --json`; it reports author planning, not measured film
+quality. Keep missing event/tempo data unknown. See [rhythm.md](rhythm.md).
+
 Draft each shot's duration as the maximum of visible action, reading time and narration, plus the necessary opening/closing hold. Generate or import the audio, then retime against its actual length. For a hard duration limit, shorten the script or reduce scope; do not cut the voice or silently accelerate it.
 
 For imported recordings, supply checked sentence subtitles under `captions.<lang>` and named word/phrase timestamps under `cues.<lang>` in film.json. See film.md. Mark estimates as estimates. Tie a reveal to `M.cue('result')`; missing cues throw rather than putting an action at second zero. Keep one event time for the picture and sound. Sentence interpolation does not establish a measured word onset.
@@ -84,6 +91,12 @@ Build the visual argument before adding textures. Verify one full-resolution fra
 ## Review what reached the file
 
 Review the final MP4 against the source fact/shot table, chosen direction, card mechanism and approved copy. Technical measurements alone do not establish narrative or visual quality. If an independent reviewer is available, give them the actual cut, requirements, selected cards and reference frames without the maker's explanation. Do not require multi-agent infrastructure just to render a film.
+
+For a point-specific correction, use the [offline frame review](frame-review.md)
+to collect image bytes, location, declared time and source revision together.
+Mark a note addressed only with a current revision and a new frame; visual
+acceptance remains separate. This complements the MP4/rhythm review rather than
+replacing playback with a still.
 
 Record observable issues in `reviews/<round>.md`:
 
@@ -120,5 +133,6 @@ These are workflow influences, not bundled upstream prompts, source code or medi
 - [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15): observable style signatures, shared audio/visual cues and timecoded critique.
 - [dashi-animationstyle](https://github.com/chuspeeism/dashi-animationstyle): narration-led keyword events and subtitle-free delivery.
 - [huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion): frame-first route selection and evidence-backed lessons. Existing grammar adaptations remain attributed in grammars.md.
+- [huashu-motion](https://github.com/alchaincyf/huashu-motion): whole-film intensity planning, explicit product/material fit and frame-location feedback; original implementations and pinned attribution are in ASSETS.md.
 - [wtt-code-animation-studio](https://github.com/WaterDJiang/Wattter_openSkills/tree/main/wattter_skills/wtt-code-animation-studio): content-led duration and source/version traceability.
 - [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft): parameterized shot recipes, feature-to-shot mapping and separation of baked motion from editable layers.

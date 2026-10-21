@@ -1,6 +1,6 @@
 {
   "name": "motion-use",
-  "version": "0.16.0",
+  "version": "0.19.0",
   "description": "Directed local films with exact-time animation, authored shots and delivered-video verification. Built on HyperFrames.",
   "license": "MIT",
   "private": true,

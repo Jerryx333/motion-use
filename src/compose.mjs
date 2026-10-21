@@ -24,6 +24,7 @@ export function scoreView(film, lang, voice) {
     copy: film.copy?.[lang] ?? {},
     brief: film.brief ?? {},
     look: film.look ?? {},
+    rhythm: film.rhythm ?? null,
   };
 }
 

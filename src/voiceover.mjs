@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { splitSentences } from "./caption-plan.mjs";
 
 export const DEFAULT_VOICES = { zh: "zh-CN-YunxiNeural", en: "en-US-AndrewMultilingualNeural" };
 export const MANIFEST = ".motion-use-voiceover.json";
@@ -127,7 +128,7 @@ export function parseSrt(text) {
 // window by character count. Marked estimated: it is not word-accurate.
 export function estimateCues(text, start, end) {
   const parts = [];
-  for (const sentence of String(text).match(/[^。！？.!?；;]+[。！？.!?；;]*/g) ?? []) {
+  for (const sentence of splitSentences(text)) {
     const cjk = /[\u2e80-\u9fff]/.test(sentence),
       limit = cjk ? 18 : 42;
     if (sentence.trim().length <= limit) parts.push(sentence.trim());
