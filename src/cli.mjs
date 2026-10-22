@@ -162,7 +162,7 @@ Options for still/render:
                       native when motion-render is installed and the film draws no WebGL; film.json "renderer")
   --gpu               Render in Chrome on the GPU: faster than Chrome on the CPU, but frames may differ by
                       invisible noise between runs (default: bit-identical output for the same brief)
-  --workers <n>       still/render: threads of the native renderer (default: cores, at most 8); processes an
+  --workers <n>       still/render: most workers of the native renderer (default: cores, at most 8; it settles on fewer when more stop paying); processes an
                       external engine runs at once, each on its own frame range (default 1; an engine with
                       "parallel": true gets one process and n); passed to the browser renderer otherwise
   --json              Machine-readable result on stdout (compact; --verbose adds every measurement)
@@ -970,7 +970,7 @@ async function render(o, [briefPath]) {
           fs.writeFileSync(previewReport,JSON.stringify({file:previewFile,preview:true,from,to,motion},null,2)+"\n");
         } catch(e) { motion = {skipped:`motion analysis failed: ${e.message}`}; }
         if (!o.json) console.log(previewFile);
-        return { ok: true, id, preview: true, file: previewFile, from, to, motion, report:previewReport, renderer: usedRenderer(brief, o) };
+        return { ok: true, id, preview: true, file: previewFile, from, to, motion, report:previewReport, renderer: usedRenderer(brief, o), ...(hf.native ? { native: hf.native } : {}) };
       }
       const file = path.join(
         q === "draft" ? path.join(out, "preview") : out,
@@ -1174,6 +1174,7 @@ async function render(o, [briefPath]) {
         lang: proj.lang,
         format: proj.format,
         renderer: verification.renderer,
+        ...(hf?.native ? { native: hf.native } : {}),
         normalization,
         verification: {
           ok: verification.ok,

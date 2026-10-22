@@ -437,11 +437,16 @@ pub fn install(scope: &mut v8::PinScope, obj: v8::Local<v8::Object>) {
                 if c.image_fresh {
                     if let Some(slot) = c.image_slot { return Some((slot, None)); }
                 }
-                let mut px = vec![];
-                c.read_back(egl, &mut px);
-                let at = if !c.attrs.alpha { sk::AlphaType::Opaque } else if c.attrs.premultiplied { sk::AlphaType::Premul } else { sk::AlphaType::Unpremul };
+                // read straight into the image's pixels: a fresh Data, owned here alone, which
+                // read_back_into fills completely (SkData::writable_data is this same cast)
+                let n = (c.w * c.h * 4) as usize;
+                let data = unsafe { sk::Data::new_uninitialized(n) };
+                let px = unsafe { std::slice::from_raw_parts_mut(data.as_bytes().as_ptr() as *mut u8, n) };
+                c.read_back_into(egl, px);
+                // all opaque: Skia draws it as a copy instead of blending every pixel
+                let at = if !c.attrs.alpha || crate::canvas::all_opaque(px) { sk::AlphaType::Opaque } else if c.attrs.premultiplied { sk::AlphaType::Premul } else { sk::AlphaType::Unpremul };
                 let info = sk::ImageInfo::new((c.w, c.h), sk::ColorType::RGBA8888, at, None);
-                let img = sk::images::raster_from_data(&info, sk::Data::new_copy(&px), (c.w * 4) as usize)?;
+                let img = sk::images::raster_from_data(&info, data, (c.w * 4) as usize)?;
                 c.image_fresh = true;
                 Some((c.image_slot.unwrap_or(usize::MAX), Some(img)))
             }).flatten();

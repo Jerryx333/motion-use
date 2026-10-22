@@ -115,6 +115,21 @@ export const nativeWorkers = (o) => Number(o.workers ?? Math.max(1, Math.min(8, 
 
 const ENV = () => ({ ...process.env, MOTION_USE_ROOT: ROOT });
 
+/**
+ * What motion-render says about a render (its --stats line on stderr): the workers it settled on
+ * (it starts at the performance cores and adds workers while the frame rate rises, at most
+ * --workers), whether they were processes (WebGL on the GPU) or threads, and the pace.
+ */
+export function nativeStats(stderr) {
+  const line = stderr.trim().split("\n").reverse().find((l) => l.startsWith("{"));
+  try {
+    const s = JSON.parse(line);
+    return { workers: s.workers, workers_max: s.workers_max, processes: s.processes, frames: s.frames, ms_per_frame: Math.round((s.wall_ms / Math.max(1, s.frames)) * 10) / 10 };
+  } catch {
+    return null;
+  }
+}
+
 function collect(child, cap = 8000) {
   let out = "";
   child.stderr?.on("data", (d) => (out = (out + d).slice(-cap)));
@@ -124,7 +139,8 @@ function collect(child, cap = 8000) {
 /**
  * Draw frames 0…n-1 of a built page and encode them, with the mixed sound when `audio` is given,
  * into `file`: motion-render's raw RGBA goes through a pipe into one ffmpeg with the browser
- * path's encoder settings. Resolves { code, out, ms } like runHyperframes.
+ * path's encoder settings. Resolves { code, out, ms } like runHyperframes, plus `native`: the
+ * renderer's own account (nativeStats).
  */
 export function streamRender({ bin, proj, file, audio = null, quality = "looks", crf, workers, frames, onProgress }) {
   const fps = proj.fps,
@@ -132,10 +148,11 @@ export function streamRender({ bin, proj, file, audio = null, quality = "looks",
     count = frames ?? Math.round(proj.total * fps);
   const t0 = performance.now();
   return new Promise((resolve) => {
-    const mr = spawn(bin, ["render", path.join(proj.dir, "index.html"), "--frames", `0-${count - 1}`, "--fps", String(fps), "--stream", "-", "--workers", String(workers)], {
+    const mr = spawn(bin, ["render", path.join(proj.dir, "index.html"), "--frames", `0-${count - 1}`, "--fps", String(fps), "--stream", "-", "--workers", String(workers), "--stats"], {
       env: ENV(),
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const stats = collect(mr);
     const ffArgs = [
       "-v", "error", "-y", ...(onProgress ? ["-progress", "pipe:2", "-stats_period", "1"] : []),
       "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${w}x${h}`, "-framerate", String(fps), "-i", "pipe:0",
@@ -160,7 +177,7 @@ export function streamRender({ bin, proj, file, audio = null, quality = "looks",
       });
     }
     mr.stdout.destroy();
-    pair(mr, ff, (r) => resolve({ ...r, ms: performance.now() - t0 }));
+    pair(mr, ff, (r) => resolve({ ...r, ms: performance.now() - t0, native: nativeStats(stats()) }));
   });
 }
 

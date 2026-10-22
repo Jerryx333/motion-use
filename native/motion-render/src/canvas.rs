@@ -120,6 +120,14 @@ pub struct Canvas2D {
     pub path: usize,
 }
 
+/// Whether every RGBA pixel has alpha 255 (no early exit, so it vectorises).
+pub fn all_opaque(px: &[u8]) -> bool {
+    const A: u64 = 0xFF00_0000_FF00_0000;
+    let words = px.chunks_exact(8);
+    let tail = words.remainder().chunks_exact(4).all(|p| p[3] == 255);
+    tail && words.fold(A, |acc, c| acc & u64::from_le_bytes(c.try_into().unwrap())) & A == A
+}
+
 fn new_surface(w: i32, h: i32) -> Option<Surface> {
     if w <= 0 || h <= 0 || w > 16384 || h > 16384 {
         return None;
@@ -814,16 +822,22 @@ impl Runtime {
         let _ = s.canvas().write_pixels(&info, &data[start..], row, (dx + x0, dy + y0));
     }
 
-    /// The output frame: straight (unpremultiplied) RGBA, row-major, no padding.
-    pub fn read_rgba(&mut self, id: usize, out: &mut Vec<u8>) -> (i32, i32) {
+    /// The output frame: straight (unpremultiplied) RGBA, row-major, no padding; and whether
+    /// every pixel is opaque. Read premultiplied first, a plain copy: an opaque frame (most
+    /// are) is the same either way, and only a frame with transparency pays for unpremultiplying.
+    pub fn read_rgba(&mut self, id: usize, out: &mut Vec<u8>) -> (i32, i32, bool) {
         let c = &mut self.canvases[id];
         let (w, h) = (c.w, c.h);
         out.resize((w * h * 4) as usize, 0);
-        if let Some(s) = c.surface.as_mut() {
-            let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
-            s.read_pixels(&info, out.as_mut_slice(), (w * 4) as usize, (0, 0));
+        let Some(s) = c.surface.as_mut() else { return (w, h, false) };
+        let premul = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Premul, None);
+        s.read_pixels(&premul, out.as_mut_slice(), (w * 4) as usize, (0, 0));
+        if all_opaque(out) {
+            return (w, h, true);
         }
-        (w, h)
+        let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
+        s.read_pixels(&info, out.as_mut_slice(), (w * 4) as usize, (0, 0));
+        (w, h, false)
     }
 
     // ------------------------------------------------------------ setters
