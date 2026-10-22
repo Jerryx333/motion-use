@@ -44,7 +44,8 @@ Options:
                   encoder the caller runs (motion-use); a job does the same with
                   \"formats\": [\"rgba-stream\"], \"stream\": <path>
   --stats         print timing JSON on stdout (stderr when frames go to stdout)
-  --gl <backend>  WebGL backend: auto (default: the GPU, else SwiftShader), gpu, metal, vulkan,
+  --gl <backend>  WebGL backend: auto (default: the GPU on one worker, SwiftShader on several, which
+                  scale with cores), gpu, metal, vulkan,
                   swiftshader (CPU, same pixels as Chrome's software GL), d3d11, off; same as
                   MOTION_RENDER_GL. WebGL runs on ANGLE, found next to this binary, in
                   MOTION_RENDER_ANGLE_DIR or ~/.cache/motion-render/angle (native/scripts/fetch-angle.sh)
@@ -102,10 +103,23 @@ fn x264(quality: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// The WebGL backend for `workers` threads when MOTION_RENDER_GL is unset or auto. ANGLE's GPU
+/// backend does not scale across threads: one context per worker contends for the same device
+/// (Apple M5 Pro, Metal: 72 ms/frame on 1 worker, 779 on 8), while SwiftShader runs each worker
+/// on its own core (30 ms/frame on 8). An explicit backend, gpu included, is kept.
+fn auto_gl_for_workers(gl: Option<&str>, workers: usize) -> Option<&'static str> {
+    let auto = matches!(gl.unwrap_or_default().trim().to_ascii_lowercase().as_str(), "" | "auto");
+    (auto && workers > 1).then_some("swiftshader")
+}
+
 /// Render `times` across workers. Worker k takes frames k, k+n, k+2n…; with ffmpeg the main
 /// thread pulls them back in order through one small queue per worker.
 fn run(plan: Plan) -> Result<Value> {
     let n = plan.workers.max(1).min(plan.times.len().max(1));
+    if let Some(backend) = auto_gl_for_workers(std::env::var("MOTION_RENDER_GL").ok().as_deref(), n) {
+        // set before any worker thread starts, like --gl
+        std::env::set_var("MOTION_RENDER_GL", backend);
+    }
     let t0 = Instant::now();
     let page = Arc::new(plan.page);
     let times = Arc::new(plan.times);
@@ -500,4 +514,24 @@ fn real_main() -> Result<()> {
         println!("{}", r);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_gl_for_workers;
+
+    #[test]
+    fn auto_with_several_workers_uses_swiftshader() {
+        assert_eq!(auto_gl_for_workers(None, 8), Some("swiftshader"));
+        assert_eq!(auto_gl_for_workers(Some(""), 2), Some("swiftshader"));
+        assert_eq!(auto_gl_for_workers(Some(" Auto "), 4), Some("swiftshader"));
+    }
+
+    #[test]
+    fn one_worker_or_an_explicit_backend_is_kept() {
+        assert_eq!(auto_gl_for_workers(None, 1), None);
+        for gl in ["gpu", "metal", "vulkan", "d3d11", "swiftshader", "off"] {
+            assert_eq!(auto_gl_for_workers(Some(gl), 8), None, "{gl}");
+        }
+    }
 }
