@@ -4,6 +4,14 @@ English | [中文](README.zh-CN.md)
 
 Direct a film with your coding agent: plan the action, author exact-time animation, render locally, then inspect the delivered MP4. Chinese/English, landscape/portrait/square, local fonts and assets. Scene templates remain available for quick explainers.
 
+Cast the narrator before generating the full script: `voiceover audition <plan.json> --out <fresh-dir>` creates same-script samples and an offline listening page. A trusted `command` TTS bridge supports explicit external models and performance direction; model/settings changes invalidate generated audio. See [voice casting](references/voice-casting.md). ASR checks reading, not naturalness or suitability.
+
+Source footage and music as part of direction. New projects include `SOURCES.md`
+for shot needs, candidate comparisons, provider/licence records, frozen files and
+actual audition coverage. Use chrome-use's available read-only `site` adapters
+for discovery, inspect the provider's page, then choose a licensed track or an
+authored score against the narration and picture. See [asset sourcing](references/asset-sourcing.md).
+
 The promo below was directed and rendered with motion-use itself (60 s, 60 fps, English narration with burned-in subtitles). Everything on screen is real: films made with motion-use, the code behind one of them, and actual `verify`, `still --guides` and `voiceover check` output. [Source and director notes](examples/motion-use-film/). The earlier three.js promo is in [examples/motion-use-promo](examples/motion-use-promo/).
 
 https://github.com/user-attachments/assets/4176ad22-c992-4c6f-ad7d-1dc50906fa96
@@ -101,7 +109,7 @@ Full schema: [references/brief.md](references/brief.md). Examples: [examples/](e
 - **Real footage.** `video` scenes play your own screen recordings (trimmed, sped up); `image` scenes show screenshots or illustrations made with [image-use](https://github.com/leeguooooo/image-use). Both can highlight a region (everything else dims) and zoom into it.
 - **Your brand.** Logo on the cover, end card and (optionally) every scene; a full color palette with contrast checks; your own fonts, subset per video, with their license.
 - **Vertical safe areas.** 9:16 keeps text clear of the like/share column and the caption block.
-- **Reproducible and local.** Same brief, same video: bit for bit (software rendering), except that frames of a recorded clip can differ by invisible noise. Animations are CSS that [HyperFrames](https://github.com/heygen-com/hyperframes) seeks frame by frame; fonts ship with motion-use and are cut to the characters each video uses; each film's music is written for it (`composition/score.js`) and played with recorded CC0 instruments. Rendering loads nothing from the network and runs the engine with telemetry off (`HYPERFRAMES_NO_TELEMETRY`, `DO_NOT_TRACK`). The CLI checks GitHub for a newer release at most once a day; `MOTION_USE_NO_UPDATE_CHECK=1` turns that off.
+- **Reproducible and local.** Same brief, same video: bit for bit (software rendering), except that frames of a recorded clip can differ by invisible noise. Animations are CSS that [HyperFrames](https://github.com/heygen-com/hyperframes) seeks frame by frame; fonts ship with motion-use and are cut to the characters each video uses; music can be a frozen local track or a film-specific `composition/score.js` played with recorded CC0 instruments. Rendering loads nothing from the network and runs the engine with telemetry off (`HYPERFRAMES_NO_TELEMETRY`, `DO_NOT_TRACK`). The CLI checks GitHub for a newer release at most once a day; `MOTION_USE_NO_UPDATE_CHECK=1` turns that off.
 - **Safe with untrusted text.** Brief text is always drawn as text, never HTML. Custom HTML scenes exist for when templates are not enough, but render only with `--allow-custom-html`. motion-use never overwrites output files it did not write (`--force` to override).
 
 ## Requirements

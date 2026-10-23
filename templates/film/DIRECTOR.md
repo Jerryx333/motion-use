@@ -26,6 +26,7 @@ Slideshow pacing · copied demo · no concrete object · dead background or empt
 - Are short holds deliberate, and text readable at phone size?
 - Is the first second already interesting? Does the last beat pay off the opening?
 - Have source facts and footage provenance been checked?
+- Does SOURCES.md show why the selected footage/music fits the shot, the licence and local-file evidence, and what was actually watched or heard? Compare licensed tracks or an authored score; the starter score is not a musical decision.
 - [ ] Each claim has its source and date read recorded here; public-release claims are supported by public sources.
 - [ ] Every illustrative animation carries a small "illustrative" label throughout; none passes for recorded footage.
 - [ ] Third-party vendor names and logos are absent; model references use generic terms.

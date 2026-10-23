@@ -48,6 +48,10 @@ motion-use concat parts.json --out ./joined --release  # 长片分段拼接，�
 
 交接包是可导入剪辑软件的素材与时间表，不是剪映原生草稿。代码动效仍需烘焙到画面；无字幕开关只控制 `M.captions`，自绘文字与素材内文字保留。草稿会留在 `out/preview/`，交付检查失败也能回看。
 
+旁白先选模型、声线和表达方式，再生成整片。`voiceover audition <plan.json> --out <新目录>` 用同稿生成候选和离线试听页；`command` 引擎可通过可信桥接脚本接入其他 TTS 模型，模型与表达要求参与缓存校验。ASR 检查读字，实际试听判断自然度与内容是否合适。[旁白选型流程](references/voice-casting.md)。
+
+找素材和背景音乐也属于制作流程。新项目的 `SOURCES.md` 记录镜头需求、候选比较、原站许可、下载后的文件和实际试听情况。可用 chrome-use 的只读 `site` 适配器搜索，再到原站检查预览和下载；没有专用适配器时，用 `google/search` 限定站点找候选。配乐可选现成曲目或自写 `score.js`，按旁白和画面试听后决定。[素材与音乐工作流](references/asset-sourcing.md)。
+
 ## 导演模式（默认）
 
 选型可用 `catalog recommend --product-type developer-tool --material screenshot`，
@@ -128,7 +132,7 @@ brief 是一组场景：`title`、`terminal`、`steps`、`diagram`、`features`�
 - **真实素材。** `video` 场景播放你自己的录屏（可剪切、加速）；`image` 场景展示截图或用 [image-use](https://github.com/leeguooooo/image-use) 生成的插图。两者都能高亮一个区域（其余部分压暗）并放大。
 - **你的品牌。** 封面、片尾和（可选）每个场景上的 logo；带对比度检查的完整配色；你自己的字体，按每个视频用到的字裁剪，附带许可证。
 - **竖版安全区。** 9:16 的文字会避开点赞分享那一列和底部文案区。
-- **可复现，全本地。** 同一份 brief 渲染出同一个视频，逐位一致（软件渲染），录屏片段的帧可能有肉眼不可见的差异。动画是 CSS，由 [HyperFrames](https://github.com/heygen-com/hyperframes) 逐帧定位；字体随 motion-use 发布，并按每个视频用到的字裁剪；每条片子的配乐按题材单独写（`composition/score.js`），用 CC0 真实乐器演奏。渲染不从网络加载任何资源，引擎的统计上报已关闭（`HYPERFRAMES_NO_TELEMETRY`、`DO_NOT_TRACK`）。CLI 每天最多访问一次 GitHub 检查新版本，设置 `MOTION_USE_NO_UPDATE_CHECK=1` 可以关闭。
+- **可复现，全本地。** 同一份 brief 渲染出同一个视频，逐位一致（软件渲染），录屏片段的帧可能有肉眼不可见的差异。动画是 CSS，由 [HyperFrames](https://github.com/heygen-com/hyperframes) 逐帧定位；字体随 motion-use 发布，并按每个视频用到的字裁剪；配乐可用固定在项目里的本地曲目，也可按题材单独写 `composition/score.js`，用 CC0 真实乐器演奏。渲染不从网络加载任何资源，引擎的统计上报已关闭（`HYPERFRAMES_NO_TELEMETRY`、`DO_NOT_TRACK`）。CLI 每天最多访问一次 GitHub 检查新版本，设置 `MOTION_USE_NO_UPDATE_CHECK=1` 可以关闭。
 - **不信任的文字也安全。** brief 里的文字始终当作文字绘制，不当 HTML。模板不够用时可以写自定义 HTML 场景，但必须加 `--allow-custom-html` 才会渲染。motion-use 不会覆盖不是它写出的输出文件（`--force` 可以强制覆盖）。
 
 ## 环境要求
@@ -150,7 +154,7 @@ motion-use 是一个 Node.js 程序，带一个可选的原生渲染器：影片
 |---|---|
 | `init [dir]` | 默认创建导演模式项目；`--mode template` 选择模板 brief：`--style`、`--name`、`--lang zh,en`、`--format landscape,vertical` |
 | `validate [brief]` | 检查 brief、文件、旁白长度和字形覆盖；打印时间线 |
-| `voiceover [brief]` | 按场景的 `narration` 生成语音：`--engine azure`（有授权）或 `edge`（预览）；`voiceover check` 把旁白转成文字，标出读错的地方 |
+| `voiceover [brief]` | 按场景的 `narration` 生成语音：`azure`、`edge` 预览或 `command` 外部模型；`voiceover audition` 同稿试读，`voiceover check` 把旁白转成文字，标出读错的地方 |
 | `still [brief]` | 关键帧和联系表；`--at 1.5,4` 指定秒数，`--beats 4` 每小节一帧；`--onion 1.2-2` 把一段动作的若干帧叠成一张图，看间距判断缓动；绘制代码在帧之间留了状态时会警告 |
 | `render [brief]` | 每种语言 × 画幅一个 MP4，外加封面 PNG；`--quality draft\|standard\|high`、`--target github` / `--max-size 9MB`；`--release` 出平台母版和清单，`--snapshot <id>` 原样重渲染之前的版本，`--gate` 旁白被标出、文字出画或叠字时失败 |
 | `verify <mp4>` | 解码并测量交付的视频：检查帧、音频、运动指标；`--gate` 红灯时失败，`--loop` 检查循环接缝，`--manifest` 确认文件就是当前发布母版 |

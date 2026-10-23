@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { initFilm, checkFilm, buildFilm, validateFilm } from "../src/film.mjs";
-import { chooseRenderer, findRenderer, webglUse, unsupportedContext } from "../src/native.mjs";
+import { chooseRenderer, findRenderer, webglUse, unsupportedContext, nativeStats } from "../src/native.mjs";
 import { envelope, mixAudio } from "../src/mix.mjs";
 import { runHyperframes } from "../src/hf.mjs";
 import { compareRenders, loudness, pcm, renderWith, rmsWindows } from "../native/bench/e2e.mjs";
@@ -299,4 +299,10 @@ test("external engine with \"stream\": raw RGBA through a FIFO, one process, no 
   const bad = cli(["render", dir, "--allow-code", "--quality", "draft", "--no-asr", "--force", "--json"]);
   assert.equal(bad.code, 1);
   assert.match(bad.json.outputs[0].error, /streamed 55 of 60 frames/);
+});
+
+test("native stats: the workers motion-render settled on, from its last stderr line", () => {
+  const err = 'a page warning\n{"frames":240,"workers":4,"workers_max":8,"processes":true,"wall_ms":1968,"setup_ms":300}\n';
+  assert.deepEqual(nativeStats(err), { workers: 4, workers_max: 8, processes: true, frames: 240, ms_per_frame: 8.2 });
+  assert.equal(nativeStats("motion-render: no frames"), null);
 });

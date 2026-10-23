@@ -42,6 +42,9 @@ export function filmInputs(film, filmFile) {
     ...(film.engine?.command ?? [])
       .filter((a) => path.isAbsolute(a) && film.dir && isInside(film.dir, a) && fs.statSync(a, { throwIfNoEntry: false })?.isFile())
       .map((file) => ({ role: "engine", file })),
+    ...(film.narrationConfig?.command ?? [])
+      .filter(a => path.isAbsolute(a) && isInside(film.dir, a) && fs.statSync(a, { throwIfNoEntry: false })?.isFile())
+      .map(file => ({ role: "voiceover-engine", file })),
     ...Object.values(film.videos ?? {}).flatMap((v) => (v.sequence ?? [v.file]).map((file) => ({ role: "footage", file }))),
     ...(film.musicFile ? [{ role: "music", file: film.musicFile }] : []),
     ...(film.tracks ?? []).map((a) => ({ role: a.role === "voiceover" ? "voiceover" : "audio", file: a.file, lang: a.lang, id: a.id })),

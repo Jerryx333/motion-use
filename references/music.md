@@ -1,6 +1,15 @@
-# Writing the film's music
+# Choosing and writing the film's music
 
-Every film gets music written for it, the way its picture is drawn for it. `composition/score.js` decides the instruments, the mode, where the music is sparse, where it peaks and which picture events it hits. A built-in mood is the same bed in every film of that mood: validation warns about it, and `--release` refuses it unless `music.why` records why a generic bed is right.
+Choose music for this film: a licensed existing track or an authored score. For
+search, candidate comparison, licence records and auditioning with narration, read
+[asset-sourcing.md](asset-sourcing.md). Do not choose a score merely because init
+created one. Imported tracks use `music.file`; `motion-use beats <audio>` estimates
+the grid and source offset, and the final mix still needs listening review.
+
+For authored music, `composition/score.js` decides the instruments, mode, where
+the music is sparse, where it peaks and which picture events it hits. A built-in
+mood is the same bed in every film of that mood: validation warns about it, and
+`--release` refuses it unless `music.why` records why a generic bed is right.
 
 ```json
 "music": {"score": "composition/score.js", "volume": 0.6}

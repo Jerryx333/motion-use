@@ -44,6 +44,9 @@ pub struct GlCtx {
     pub image_slot: Option<usize>,
     pub image_fresh: bool,
     pub syncs: Vec<Option<GLsync>>,
+    /// pixel-pack buffer for read_back (ES 3) and its size
+    pbo: GLuint,
+    pbo_len: usize,
 }
 
 /// Saves the bits of GL state the drawing-buffer plumbing touches and puts them back on drop.
@@ -175,6 +178,8 @@ impl GlCtx {
             image_slot: None,
             image_fresh: false,
             syncs: vec![],
+            pbo: 0,
+            pbo_len: 0,
         };
         // WebGL 1 (an ES 2 context) gets no multisampling here: say so through getContextAttributes
         if attrs.antialias && version >= 2 {
@@ -310,6 +315,12 @@ impl GlCtx {
 
     /// The drawing buffer as top-down RGBA (premultiplied when premultipliedAlpha is on).
     pub fn read_back(&mut self, egl: &Egl, out: &mut Vec<u8>) {
+        out.resize((self.w * self.h * 4) as usize, 0);
+        self.read_back_into(egl, out);
+    }
+
+    /// read_back into `out`, exactly w*h*4 bytes, every byte written.
+    pub fn read_back_into(&mut self, egl: &Egl, out: &mut [u8]) {
         let (w, h) = (self.w, self.h);
         if self.samples > 0 && self.version >= 2 {
             self.resolve();
@@ -317,25 +328,47 @@ impl GlCtx {
         let saved = Saved::take(self.version);
         Saved::neutral(self.version);
         let n = (w * h * 4) as usize;
-        let mut tmp = vec![0u8; n];
+        let row = (w * 4) as usize;
+        debug_assert_eq!(out.len(), n);
+        // GL rows run bottom-up
+        let flip = |src: &[u8], out: &mut [u8]| {
+            for y in 0..h as usize {
+                let s = (h as usize - 1 - y) * row;
+                out[y * row..(y + 1) * row].copy_from_slice(&src[s..s + row]);
+            }
+        };
         unsafe {
             let src = if self.samples > 0 && self.version >= 2 { self.resolve_fbo } else { self.fbo };
             if self.version >= 2 {
                 gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src);
+                // Through a pixel-pack buffer: the GPU copies the (losslessly compressed) colour
+                // buffer out. A plain glReadPixels makes Metal decompress it on the CPU, which took
+                // most of a three.js frame's CPU time (Apple M5 Pro, AGX processCompressedRegion2D).
+                if self.pbo == 0 {
+                    gl::GenBuffers(1, &mut self.pbo);
+                }
+                gl::BindBuffer(gl::PIXEL_PACK_BUFFER, self.pbo);
+                if self.pbo_len != n {
+                    gl::BufferData(gl::PIXEL_PACK_BUFFER, n as isize, std::ptr::null(), gl::STREAM_READ);
+                    self.pbo_len = n;
+                }
+                gl::ReadPixels(0, 0, w, h, gl::RGBA, gl::UNSIGNED_BYTE, std::ptr::null_mut());
+                let p = gl::MapBufferRange(gl::PIXEL_PACK_BUFFER, 0, n as isize, gl::MAP_READ_BIT) as *const u8;
+                if p.is_null() {
+                    out.fill(0);
+                } else {
+                    flip(std::slice::from_raw_parts(p, n), out);
+                }
+                gl::UnmapBuffer(gl::PIXEL_PACK_BUFFER);
             } else {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, src);
+                let mut tmp = vec![0u8; n];
+                let mut len = 0;
+                (egl.angle.read_pixels_robust)(0, 0, w, h, gl::RGBA, gl::UNSIGNED_BYTE, n as GLsizei, &mut len, std::ptr::null_mut(), std::ptr::null_mut(), tmp.as_mut_ptr() as *mut c_void);
+                flip(&tmp, out);
             }
-            let mut len = 0;
-            (egl.angle.read_pixels_robust)(0, 0, w, h, gl::RGBA, gl::UNSIGNED_BYTE, n as GLsizei, &mut len, std::ptr::null_mut(), std::ptr::null_mut(), tmp.as_mut_ptr() as *mut c_void);
         }
         saved.restore(self.version);
-        // GL rows run bottom-up
-        out.resize(n, 0);
-        let row = (w * 4) as usize;
-        for y in 0..h as usize {
-            let s = (h as usize - 1 - y) * row;
-            out[y * row..(y + 1) * row].copy_from_slice(&tmp[s..s + row]);
-        }
         if !self.attrs.alpha {
             for p in out.chunks_exact_mut(4) {
                 p[3] = 255;
@@ -356,6 +389,9 @@ impl GlCtx {
                     if fb != 0 {
                         gl::DeleteFramebuffers(1, &fb);
                     }
+                }
+                if self.pbo != 0 {
+                    gl::DeleteBuffers(1, &self.pbo);
                 }
                 for s in self.syncs.drain(..).flatten() {
                     gl::DeleteSync(s);

@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { commandSpeech, speechCommandKey } from "./tts-command.mjs";
 import { splitSentences } from "./caption-plan.mjs";
 
 export const DEFAULT_VOICES = { zh: "zh-CN-YunxiNeural", en: "en-US-AndrewMultilingualNeural" };
@@ -34,6 +35,7 @@ export function ssml(text, voice, rate = "+0%") {
 }
 
 export function pickEngine(requested) {
+  if (requested && !["azure", "edge", "command"].includes(requested)) throw new Error("unknown voiceover engine");
   if (requested) return requested;
   return process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION ? "azure" : "edge";
 }
@@ -156,7 +158,7 @@ export function readVoManifest(dir) {
  * Generate missing or outdated narration audio. Returns one row per scene × language.
  * A scene without narration text for a language is skipped (a recording can still go there).
  */
-export async function generateVoiceover(brief, { langs = brief.languages, engine: requested, force = false, log = () => {}, wordTiming = false } = {}) {
+export async function generateVoiceover(brief, { langs = brief.languages, engine: requested, force = false, log = () => {}, wordTiming = false, allowCode = false } = {}) {
   const vo = brief.voiceover;
   if (!vo?.dir) throw new Error('the brief has no voiceover folder; add "voiceover": {"dir": "voiceover"}');
   const engine = pickEngine(requested ?? vo.engine);
@@ -164,7 +166,7 @@ export async function generateVoiceover(brief, { langs = brief.languages, engine
   const manifest = readVoManifest(vo.dir);
   const rows = [];
   for (const lang of langs) {
-    const voice = vo.voices[lang] ?? DEFAULT_VOICES[lang];
+    const voice = vo.voices[lang] ?? (engine === "command" ? null : DEFAULT_VOICES[lang]);
     const rate = vo.rates[lang] ?? "+0%";
     for (const scene of brief.scenes) {
       const narration = scene.narration?.[lang];
@@ -172,7 +174,7 @@ export async function generateVoiceover(brief, { langs = brief.languages, engine
       const text = spokenText(narration, vo.say);
       const rel = path.join(lang, `${scene.id}.mp3`);
       const out = path.join(vo.dir, rel);
-      const row = { scene: scene.id, lang, file: out, engine, voice };
+      const row = { scene: scene.id, lang, file: out, engine, voice, ...(engine === "command" ? { model: vo.model, instructions: vo.instructions ?? "" } : {}) };
       if (!voice) {
         rows.push({ ...row, status: "error", error: `no voice for "${lang}"; set voiceover.voices.${lang}` });
         continue;
@@ -184,14 +186,16 @@ export async function generateVoiceover(brief, { langs = brief.languages, engine
         continue;
       }
       const rec = manifest[rel];
-      const want = { text, engine, voice, rate };
+      const want = { text, engine, voice, rate, ...(engine === "command" ? {
+        model: vo.model, instructions: vo.instructions ?? "", commandKey: speechCommandKey(vo.command ?? [], vo.commandCwd),
+      } : {}) };
       if (fs.existsSync(out)) {
         const mine = rec && rec.sha === sha(fs.readFileSync(out));
         if (!mine && !force) {
           rows.push({ ...row, status: "kept", reason: "a recording that motion-use did not make (use --force to replace it)" });
           continue;
         }
-        if (mine && rec.text === text && rec.engine === engine && rec.voice === voice && rec.rate === rate && (!wordTiming || rec.words?.length)) {
+        if (mine && Object.entries(want).every(([k,v]) => rec[k] === v) && (!wordTiming || rec.words?.length)) {
           rows.push({ ...row, status: "unchanged" });
           continue;
         }
@@ -201,11 +205,14 @@ export async function generateVoiceover(brief, { langs = brief.languages, engine
       let cues = null, words = null;
       try {
         log(`${lang}/${scene.id}: ${engine} ${voice}`);
-        await retrySpeech(async () => {
+        const generate = async () => {
           fs.rmSync(tmp, { force: true });
           if (engine === "azure") { if (wordTiming) words = azureTimed(text, voice, rate, tmp); else await azure(text, voice, rate, tmp); }
+          else if (engine === "command") commandSpeech(vo, { text, lang, voice, model: vo.model, instructions: vo.instructions ?? "", rate, output: tmp }, { allowCode });
           else cues = edge(text, voice, rate, tmp);
-        });
+        };
+        if (engine === "command") await generate();
+        else await retrySpeech(generate);
         if (!fs.existsSync(tmp) || fs.statSync(tmp).size === 0) throw new Error("no audio was written");
         fs.renameSync(tmp, out);
       } catch (e) {
@@ -253,9 +260,10 @@ export function narrationFreshness(dir, file, text, config = {}, lang) {
   const record = readVoManifest(dir)[path.relative(dir, file)];
   if (!record) return { current: false, imported: true };
   const current = record.text === text && record.sha === sha(fs.readFileSync(file)) &&
-    record.voice === (config.voices?.[lang] ?? DEFAULT_VOICES[lang]) &&
+    record.voice === (config.voices?.[lang] ?? (config.engine === "command" ? null : DEFAULT_VOICES[lang])) &&
     record.rate === (config.rates?.[lang] ?? "+0%") &&
-    (!config.engine || record.engine === config.engine);
+    (!config.engine || record.engine === config.engine) &&
+    (config.engine !== "command" || (record.model === config.model && record.instructions === (config.instructions ?? "") && record.commandKey === speechCommandKey(config.command ?? [], config.commandCwd)));
   return { current, imported: false };
 }
 

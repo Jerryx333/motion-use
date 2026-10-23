@@ -81,6 +81,20 @@ test("default init creates an authored film and never replaces its code on re-in
   );
   assert.equal(resolveProject(dir), file);
 });
+test("init reports its source record and refuses an existing one before writing project files", (t) => {
+  const dir = temp();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const sources = path.join(dir, "SOURCES.md");
+  fs.writeFileSync(sources, "Selected files and licences from an existing project");
+  assert.throws(() => initFilm({}, dir), /SOURCES\.md already exists/);
+  assert.equal(fs.readFileSync(sources, "utf8"), "Selected files and licences from an existing project");
+  assert.deepEqual(fs.readdirSync(dir), ["SOURCES.md"]);
+  fs.unlinkSync(sources);
+  const result = initFilm({}, dir);
+  assert.equal(result.sources, sources);
+  assert.ok(fs.statSync(result.sources).size > 0);
+  assert.ok(fs.existsSync(result.film));
+});
 test("film windows cover exact authored time; invalid values cannot be silently stretched", () => {
   const { dir, data } = project();
   assert.deepEqual(validateFilm(data, dir).errors, []);

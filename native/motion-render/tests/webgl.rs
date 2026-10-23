@@ -59,6 +59,18 @@ fn render(dir: &Path, out: &str, workers: &str) -> Vec<u8> {
     all
 }
 
+/// The frames as one --stream to stdout; MOTION_RENDER_PROCESSES `procs` picks processes or threads.
+fn stream(dir: &Path, workers: &str, procs: &str) -> Vec<u8> {
+    let job = dir.join("job.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_motion-render"))
+        .args(["render", dir.join("page.html").to_str().unwrap(), "--engine", "--job", job.to_str().unwrap(), "--frames", "0-3", "--fps", "4", "--stream", "-", "--workers", workers])
+        .env("MOTION_RENDER_PROCESSES", procs)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "motion-render failed: {}", String::from_utf8_lossy(&out.stderr));
+    out.stdout
+}
+
 #[test]
 fn webgl_draws_into_2d_and_repeats() {
     if !angle_present() {
@@ -82,5 +94,8 @@ fn webgl_draws_into_2d_and_repeats() {
     // same input, same pixels: again, and across workers
     assert_eq!(a, render(&dir, "b", "1"));
     assert_eq!(a, render(&dir, "c", "2"));
+    // frames back in order through --stream from worker processes and from threads
+    assert_eq!(a, stream(&dir, "3", "1"));
+    assert_eq!(a, stream(&dir, "3", "0"));
     std::fs::remove_dir_all(&dir).ok();
 }

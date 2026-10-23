@@ -784,12 +784,12 @@ impl Engine {
         };
         self.eval("frame", &call)?;
         self.settle(&format!("frame at {:.4}s", t), true)?;
-        let size = with_rt(|r| r.read_rgba(self.output, out));
+        let (w, h, opaque) = with_rt(|r| r.read_rgba(self.output, out));
         crate::webgl::end_frame();
-        if let Some(bg) = self.background {
+        if let (Some(bg), false) = (self.background, opaque) {
             flatten(out, bg);
         }
-        Ok(size)
+        Ok((w, h))
     }
 
     /// Run motion-use's text probe (film pages only) over `times` (a JSON array of seconds).

@@ -121,10 +121,6 @@
     }
   ],
   "voiceover": {
-    "dir": "voiceover",
-    "rate": {
-      "zh": "+8%",
-      "en": "+5%"
-    }
+    "dir": "voiceover"
   }
 }
