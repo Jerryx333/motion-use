@@ -211,6 +211,13 @@ window.motionStudy = function (c, t, width, height, id) {
       const y = 200 + (i - 1) * 105 * q;
       box(310 + (i - 1) * 48 * q, y, 340, 100, [accent, "#8c9f8e", ink][i], 6);
     });
+  } else if (id === "tutorial-steps") {
+    box(120,100,720,320,"#fff");
+    const x=mix(160,230,p(.4,.6)), w=mix(550,450,p(.4,.6));
+    box(x,190,w,85,"#eee");
+    c.strokeStyle=accent; c.lineWidth=5; c.strokeRect(x,190,w,85);
+    c.fillStyle=ink; c.font="30px sans-serif"; c.fillText(t<3 ? "1. Select the setting" : "2. Confirm the result",170,150);
+    [0,1].forEach(i=>{c.beginPath();c.arc(465+i*30,450,7,0,Math.PI*2);c.fillStyle=(t<3?0:1)===i?accent:ink;c.fill();});
   } else if (id === "shared-shape") {
     let state = [330, 215, 300, 110, 55];
     for (const [at, next] of [

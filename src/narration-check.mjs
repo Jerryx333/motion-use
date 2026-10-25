@@ -2,6 +2,8 @@
 // TTS misreads that no reviewer heard in the iphone-use promo (2026-10): "AI" spoken as
 // "A-A-I", and 重试 read zhòng shì so it came back as 重视. Speech recognition catches both.
 import crypto from "node:crypto";
+import { Converter } from "opencc-js";
+const simplify = Converter({ from: "tw", to: "cn" });
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -126,13 +128,18 @@ export function chineseNumber(s) {
   return total + section + num;
 }
 
-export const COMPARATOR_VERSION = "3";
+export const COMPARATOR_VERSION = "4";
 
 function normalizeNumbers(text) {
-  return String(text).normalize("NFKC").replace(/[零〇一二两三四五六七八九十百千万亿]+点[零〇一二三四五六七八九]+/g, (value) => {
+  return simplify(String(text).normalize("NFKC"))
+    .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\s+(dollars?|bytes?|seconds?)\b/gi, (_, n, unit) => `${["zero","one","two","three","four","five","six","seven","eight","nine","ten"].indexOf(n.toLowerCase())} ${unit.toLowerCase()}`)
+    .replace(/\$\s*(\d+(?:\.\d+)?)/g, "$1 dollars")
+    .replace(/\b(\d+)\s+([TGKM])\s+B\b/gi, "$1$2B")
+    .replace(/[零〇一二两三四五六七八九十百千万亿]+点[零〇一二三四五六七八九]+/g, (value) => {
     const [whole, fraction] = value.split("点");
     return fraction === undefined ? String(chineseNumber(whole)) : `${chineseNumber(whole)}.${[...fraction].map((c) => CN_DIGITS[c]).join("")}`;
-  });
+  })
+    .replace(/[零〇一二两三四五六七八九十百千万亿]+(?=\s*(?:[TGKM]\s*B))/gi, value => String(chineseNumber(value)));
 }
 
 // Keep quantities, operations and negation separate. A recognizer's "56" is never
@@ -157,7 +164,7 @@ export function mathSignature(text, lang) {
  * that forms a word with a many-reading neighbour: 重试 → 重视), homophone (ASR spelling only:
  * 它 → 他), word (different sound), missing/extra.
  */
-export function compareNarration(script, heard, lang, { chars = {}, tones = {}, phrases = [], threshold = 0.8 } = {}) {
+export function compareNarration(script, heard, lang, { chars = {}, tones = {}, phrases = [], threshold = 0.8, accent, terms = [] } = {}) {
   const A = tokenize(script, lang),
     B = tokenize(heard, lang);
   const { ops } = align(A, B);
@@ -264,9 +271,14 @@ export function compareNarration(script, heard, lang, { chars = {}, tones = {}, 
     changes.push({ expected: expectedMath.join(" "), heard: heardMath.join(" "), kind: "math", flag: true });
   }
   const similarity = +Math.max(0, 1 - cost / Math.max(A.length, 1)).toFixed(3);
+  // Accent tolerance never dismisses quantities, negation, polyphones or declared names.
+  const protectedName = terms.some(term => tokenize(script, lang).map(x => x.t).join("").includes(tokenize(term, lang).map(x => x.t).join("")) && tokenize(script, lang).map(x => x.t).join("") !== tokenize(heard, lang).map(x => x.t).join(""));
+  const accentWarning = accent && similarity >= 0.85 && !protectedName && changes.some(c => c.flag) && changes.every(c => !c.flag || c.kind === "near");
+  if (accentWarning) for (const change of changes) if (change.flag) { change.warning = true; change.flag = false; }
   return {
     similarity,
     flagged: similarity < threshold || changes.some((c) => c.flag),
+    ...(accentWarning ? { warning: "accent: listen to the highlighted syllables" } : {}),
     changes,
   };
 }
@@ -302,7 +314,7 @@ export function resolveNarrationCheckConfig(project = {}, overrides = {}, env = 
   };
   const supplied = Object.hasOwn(project, "narrationCheck") ? project.narrationCheck : project.narrationConfig?.check;
   const cfg = supplied === undefined ? {} : object(supplied, "narrationCheck");
-  const allowedConfig = new Set(["model", "fallbackModel", "params", "terms"]);
+  const allowedConfig = new Set(["model", "fallbackModel", "params", "terms", "accent"]);
   for (const key of Object.keys(cfg)) if (!allowedConfig.has(key)) throw new Error(`unsupported narrationCheck option: ${key}`);
   if (Object.hasOwn(cfg, "params")) object(cfg.params, "narrationCheck.params");
   if (Object.hasOwn(overrides, "params")) object(overrides.params, "narrationCheck.params");
@@ -312,6 +324,11 @@ export function resolveNarrationCheckConfig(project = {}, overrides = {}, env = 
     params: { beam_size: 5, vad_filter: false, condition_on_previous_text: false, ...(cfg.params ?? {}), ...(overrides.params ?? {}) },
     comparatorVersion: COMPARATOR_VERSION,
   };
+  const accent = overrides.accent ?? cfg.accent;
+  if (accent !== undefined) {
+    if (!["zh-TW", "zh-CN", "zh-HK"].includes(accent)) throw new Error("narrationCheck.accent must be zh-TW, zh-CN or zh-HK");
+    out.accent = accent;
+  }
   const terms = overrides.terms ?? cfg.terms;
   if (terms !== undefined) {
     if (!Array.isArray(terms) || terms.length > 100 || terms.some((t) => typeof t !== "string" || !t.trim() || t.length > 80 || /[\r\n]/.test(t))) throw new Error("narrationCheck.terms: at most 100 nonempty proper names, up to 80 characters each");
@@ -349,7 +366,7 @@ export function checkNarration(items, options = {}) {
     else cache.legacy = old;
   } catch {}
   const hashes = new Map(items.map((it) => [it.file, sha(it.file)]));
-  const key = (it, selected) => asrCacheKey(hashes.get(it.file), selected, it.lang, { ...params, ...(config.terms?.length ? { terms: config.terms } : {}) });
+  const key = (it, selected) => asrCacheKey(hashes.get(it.file), selected, it.lang, { ...params, ...(config.accent ? { accent: config.accent } : {}), ...(config.terms?.length ? { terms: config.terms } : {}) });
   const missingTranscripts = new Set(), writtenKeys = new Set();
   const persist = () => {
     if (!cacheFile) return;
@@ -395,7 +412,7 @@ export function checkNarration(items, options = {}) {
     });
     if (!todo.length) return null;
     log(`narration check: transcribing ${todo.length} clip(s) with whisper ${selected}…`);
-    const res = run({ model: selected, params, ...(config.terms ? { terms: config.terms } : {}), items: todo.map((it) => ({ file: it.file, lang: it.lang })), texts: items.map((it) => it.text) });
+    const res = run({ model: selected, params, ...(config.accent ? { accent: config.accent } : {}), ...(config.terms ? { terms: config.terms } : {}), items: todo.map((it) => ({ file: it.file, lang: it.lang })), texts: items.map((it) => it.text) });
     if (res.skipped) return res.skipped;
     for (const it of todo) {
       const got = res.items?.find((x) => x.file === it.file);
@@ -411,8 +428,8 @@ export function checkNarration(items, options = {}) {
   const compare = (it, selected) => {
     const rec = cache.records[key(it, selected)];
     if (!rec || missingTranscripts.has(key(it, selected))) return { model: selected, status: "UNREVIEWED", flagged: true, heard: "", similarity: 0, changes: [], reason: "recognizer returned no transcript for this clip" };
-    const r = compareNarration(it.text, rec.text, it.lang, rec);
-    return { model: selected, heard: rec.text, ...r, status: r.flagged ? "FAIL" : "PASS", cache_key: key(it, selected) };
+    const r = compareNarration(it.text, rec.text, it.lang, { ...rec, accent: config.accent, terms: config.terms });
+    return { model: selected, heard: rec.text, ...r, status: r.flagged ? "FAIL" : r.warning ? "WARNING" : "PASS", cache_key: key(it, selected) };
   };
   const primary = items.map((it) => compare(it, model));
   const flagged = items.filter((it, i) => primary[i].flagged);
@@ -426,8 +443,14 @@ export function checkNarration(items, options = {}) {
     return { id: it.id, lang: it.lang, script: it.text, file: it.file, audio_sha256: audioSha, ...selected, attempts, human_review: reviewed ? "PASS" : "UNREVIEWED",
       ...(reviewed ? { status: "PASS", comparison_flagged: selected.flagged, flagged: false, reviewed: { reason: review.reason, sha256: audioSha } } : {}) };
   });
-  const status = lines.some((l) => l.status === "FAIL") ? "FAIL" : lines.some((l) => l.status === "UNREVIEWED") ? "UNREVIEWED" : "PASS";
-  return { ok: status === "PASS", status, human_review: lines.every((l) => l.human_review === "PASS") ? "PASS" : "UNREVIEWED", model, config, cache: cacheStats, lines };
+  if (typeof options.allowNarrationFlags === "string" && options.allowNarrationFlags.trim()) {
+    for (const line of lines) if (line.status === "FAIL") {
+      line.comparison_flagged = true; line.flagged = false; line.status = "WARNING";
+      line.waiver = { reason: options.allowNarrationFlags.trim(), sha256: line.audio_sha256, script: line.script, heard: line.heard };
+    }
+  }
+  const status = lines.some((l) => l.status === "FAIL") ? "FAIL" : lines.some((l) => l.status === "UNREVIEWED") ? "UNREVIEWED" : lines.some(l => l.status === "WARNING") ? "WARNING" : "PASS";
+  return { ok: ["PASS", "WARNING"].includes(status), status, human_review: lines.every((l) => l.human_review === "PASS") ? "PASS" : "UNREVIEWED", model, config, cache: cacheStats, lines };
 }
 
 /** Standalone static review; audio links and all text remain usable without JavaScript. */

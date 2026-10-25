@@ -12,6 +12,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { reviewScript } from "./script-review.mjs";
+import { redactImage } from "./redact.mjs";
 import {
   BriefError,
   FORMATS,
@@ -94,7 +96,10 @@ Usage: motion-use <command> [options]
   list                List projects under ~/motion-use (override: MOTION_USE_PROJECTS)
   init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
-                      --mode template keeps the scene-template workflow; --style/--story also select it
+                      --mode tutorial generates screenshot steps; --mode template keeps the scene-template workflow; --style/--story also select it
+  script review <film> --reviewer gemini|chatgpt|claude [--transport browser|api --model <id>]
+                      --plan writes the request only; --response <json> imports a saved review
+  redact <image> --box x,y,w,h [--box ...] --out <new.png>  Blur private screenshot regions
   validate [brief]    Check a brief: fields, files, voiceover lengths, characters the fonts cannot draw
   voiceover [brief]   Speak each scene's "narration" into voiceover/<lang>/<scene-id>.mp3 (--engine azure|edge|command)
   voiceover audition <plan.json> --out <fresh-dir>  Compare same-script samples; listening remains UNREVIEWED
@@ -149,6 +154,7 @@ Options for still/render:
   --gate              render: fail on a flagged narration line or text running off the frame
                       (reading-time and contrast notes stay warnings)
   --no-asr            Skip transcription, recording SKIPPED; release/gate needs --allow-asr-skip "reason"
+  --allow-narration-flags <reason>  Waive only flagged, transcribed lines; record audio/script evidence
   --asr-model <name>   Override film.narrationCheck.model; --asr-fallback-model checks only flagged clips
   --journal <jsonl>   Persist bounded operational events (project .motion-use/events.jsonl by default)
   --no-text-check     still/render: skip measuring drawn text against the frame and safe area
@@ -183,6 +189,8 @@ export async function main(argv) {
     return (console.log(VERSION), 0);
   const commands = {
     init,
+    script: scriptCmd,
+    redact: redactCmd,
     list: listProjectsCmd,
     batch: batchCmd,
     delivery: deliveryCmd,
@@ -224,6 +232,12 @@ export async function main(argv) {
       options: {
         style: { type: "string" },
         mode: { type: "string" },
+        reviewer: { type: "string" },
+        transport: { type: "string" },
+        model: { type: "string" },
+        response: { type: "string" },
+        box: { type: "string", multiple: true },
+        sigma: { type: "string" },
         story: { type: "string" },
         name: { type: "string" },
         subject: { type: "string" },
@@ -255,6 +269,7 @@ export async function main(argv) {
         "cache-home": { type: "string" },
         "asr-fallback-model": { type: "string" },
         "allow-asr-skip": { type: "string" },
+        "allow-narration-flags": { type: "string" },
         states: { type: "string" },
         plan: { type: "boolean" },
         engine: { type: "string" },
@@ -375,9 +390,9 @@ const STORIES = [
 async function init(o, [input]) {
   const dir = projectTarget(input ?? o.name ?? "film");
   if (!o.name && input && !input.includes("/") && !input.includes("\\") && input !== "." && input !== "..") o.name=input;
-  if (o.mode && !["film", "template"].includes(o.mode))
-    return fail("--mode must be film or template", o.json);
-  if (o.mode === "film" || (!o.mode && !o.story && !o.style)) {
+  if (o.mode && !["film", "template", "tutorial"].includes(o.mode))
+    return fail("--mode must be film, tutorial or template", o.json);
+  if (["film", "tutorial"].includes(o.mode) || (!o.mode && !o.story && !o.style)) {
     if (o.story || o.style)
       return fail(
         "--story/--style select templates; omit them for a film",
@@ -732,7 +747,7 @@ async function render(o, [briefPath]) {
     }
     if (!o.json)
       console.error(`restored snapshot ${found.record.id} (${found.record.created}); output goes to ${path.join(out, `snapshot-${found.record.id}`)}`);
-    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, "no-asr": found.record.renderOptions?.noAsr ?? o["no-asr"], "allow-asr-skip": found.record.renderOptions?.asrWaiver ?? o["allow-asr-skip"], _frozenNarrationCheck: found.record.renderOptions?.narrationCheck, states: found.record.renderOptions?.teachingSamples ?? undefined, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
+    return render({ ...o, "no-captions": found.record.renderOptions?.noCaptions ?? false, "no-bgm": found.record.renderOptions?.noBgm ?? false, "no-asr": found.record.renderOptions?.noAsr ?? o["no-asr"], "allow-asr-skip": found.record.renderOptions?.asrWaiver ?? o["allow-asr-skip"], "allow-narration-flags": found.record.renderOptions?.narrationFlagsWaiver ?? o["allow-narration-flags"], _frozenNarrationCheck: found.record.renderOptions?.narrationCheck, states: found.record.renderOptions?.teachingSamples ?? undefined, snapshot: undefined, _snapshot: found.record.id, out: path.join(out, `snapshot-${found.record.id}`) }, [restored]);
   }
   if (o.release) {
     if (o["max-size"] || o.target)
@@ -912,7 +927,7 @@ async function render(o, [briefPath]) {
       const outDir = path.resolve(o.out ?? path.join(path.dirname(filmFile), "out"));
       if (o._teaching?.sampleSource?.file) c.film.teaching = { ...c.film.teaching, samples: o._teaching.sampleSource.file };
       try {
-        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), noAsr: Boolean(o["no-asr"]), asrWaiver: o["allow-asr-skip"] ?? null, narrationCheck: narrationCheck?.config ?? null, teachingSamples: o._teaching?.sampleSource?.file ?? null } }).id;
+        snapshot = createSnapshot(c.film, filmFile, outDir, { version: VERSION, renderOptions: { noCaptions: Boolean(o["no-captions"]), noBgm: Boolean(o["no-bgm"]), noAsr: Boolean(o["no-asr"]), asrWaiver: o["allow-asr-skip"] ?? null, narrationFlagsWaiver: o["allow-narration-flags"] ?? null, narrationCheck: narrationCheck?.config ?? null, teachingSamples: o._teaching?.sampleSource?.file ?? null } }).id;
       } catch (e) {
         if (!o.json) console.error(`warning: snapshot not saved: ${e.message}`);
       }
@@ -1099,7 +1114,7 @@ async function render(o, [briefPath]) {
       }
       if (narrationCheck) {
         const lines = narrationCheck.lines.filter((l) => l.lang === proj.lang);
-        verification.narration_check = { ...narrationCheck, lines, ...(narrationCheck.skipped ? {} : { ok: !lines.some(l => l.flagged), status: lines.some(l => l.status === "UNREVIEWED") ? "UNREVIEWED" : lines.some(l => l.flagged) ? "FAIL" : "PASS", human_review: lines.length && lines.every(l => l.human_review === "PASS") ? "PASS" : "UNREVIEWED" }) };
+        verification.narration_check = { ...narrationCheck, lines, ...(narrationCheck.skipped ? {} : { ok: !lines.some(l => l.flagged), status: lines.some(l => l.status === "UNREVIEWED") ? "UNREVIEWED" : lines.some(l => l.flagged) ? "FAIL" : lines.some(l => l.status === "WARNING") ? "WARNING" : "PASS", human_review: lines.length && lines.every(l => l.human_review === "PASS") ? "PASS" : "UNREVIEWED" }) };
         const html = path.join(path.dirname(verification.report), "narration.html");
         writeNarrationReview(verification.narration_check, html);
         verification.narration_check.review_html = html;
@@ -1224,7 +1239,7 @@ async function render(o, [briefPath]) {
       snapshot,
       version: VERSION,
       film: filmFile ? { file: filmFile, sha256: sha(filmFile) } : null,
-      narrationCheck: narrationCheck ? { status: narrationCheck.status, human_review: narrationCheck.human_review, config: narrationCheck.config, waiver: narrationCheck.waiver ?? null, skipped: narrationCheck.skipped ?? null } : null,
+      narrationCheck: narrationCheck ? { status: narrationCheck.status, human_review: narrationCheck.human_review, config: narrationCheck.config, waiver: narrationCheck.waiver ?? null, line_waivers: narrationCheck.lines.filter(l => l.waiver).map(l => ({id:l.id, lang:l.lang, ...l.waiver})), skipped: narrationCheck.skipped ?? null } : null,
     });
     if (!o.json) console.log(releaseManifest);
     if (filmFile)
@@ -1701,7 +1716,7 @@ function runNarrationCheck(briefPath, o) {
   const config = o._frozenNarrationCheck ?? resolveNarrationCheckConfig(project, { model: o["asr-model"], fallbackModel: o["asr-fallback-model"] });
   const result = o["no-asr"]
     ? { ok: true, status: "SKIPPED", human_review: "UNREVIEWED", lines: [], config, skipped: "--no-asr" }
-    : checkNarration(items, { ...config, dir, force: Boolean(o._refreshAsr), log: o.json ? () => {} : (m) => console.error(m) });
+    : checkNarration(items, { ...config, allowNarrationFlags: o["allow-narration-flags"], dir, force: Boolean(o._refreshAsr), log: o.json ? () => {} : (m) => console.error(m) });
   return { ...result, required: items.length > 0, ...(o["allow-asr-skip"]?.trim() ? { waiver: { reason: o["allow-asr-skip"].trim() } } : {}) };
 }
 
@@ -2517,4 +2532,15 @@ async function teachingCmd(o, [input, ...extra]) {
   // A plan is an inspection artifact, not an assertion pass.
   if (o.plan) { console.log(JSON.stringify(r,null,2)); return 0; }
   return printOperational(o,r);
+}
+
+async function scriptCmd(o, [action, project, ...extra]) {
+  if(action!=="review"||!project||extra.length)return fail("script review <film> --reviewer gemini|chatgpt|claude",o.json);
+  const result=await reviewScript(project,o);
+  console.log(o.json?JSON.stringify(result,null,2):`${result.status}: ${result.file??result.prompt}`); return 0;
+}
+async function redactCmd(o, [file,...extra]) {
+  if(!file||extra.length)return fail("redact <image> --box x,y,w,h --out <new.png>",o.json);
+  const result=await redactImage(file,{boxes:o.box?.map(box=>box.split(",").map(Number)),out:o.out,sigma:o.sigma===undefined?18:Number(o.sigma)});
+  console.log(o.json?JSON.stringify(result,null,2):result.file); return 0;
 }

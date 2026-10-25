@@ -31,6 +31,7 @@
   "dependencies": {
     "harfbuzzjs": "1.6.2",
     "hyperframes": "0.8.123",
+    "opencc-js": "1.0.5",
     "subset-font": "2.9.0"
   }
 }

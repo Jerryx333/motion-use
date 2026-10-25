@@ -115,6 +115,8 @@ export function validateFilm(
           if (!finite(v, 1, 3600)) error("$.brief.length", "target seconds, 1–3600");
           else if (finite(data.duration, 1, 3600) && Math.abs(v - data.duration) > 0.5)
             warnings.push({ path: "$.brief.length", message: `the brief asks for ${v} s but the shots cover ${data.duration} s: re-plan the shots and set duration` });
+        } else if (["facts", "platforms"].includes(k)) {
+          if (!Array.isArray(v) || v.length > 100 || v.some(x => typeof x !== "string" || !x.trim() || x.length > 500)) error(`$.brief.${k}`, "up to 100 nonempty text entries");
         } else if (typeof v !== "string" || v.length > 500)
           error(`$.brief.${k}`, "text, at most 500 characters");
         else if (/^\s*TODO\b/.test(v) && k !== "reference")
@@ -861,9 +863,17 @@ export function initFilm(o, dir) {
     data.languages.some((l) => !/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(l))
   )
     throw new BriefError("--lang: language codes such as zh,en");
+  if (o.mode === "tutorial") {
+    data.formats = o.format ? data.formats : ["vertical"];
+    data.brief.facts = []; data.brief.platforms = [];
+    data.data = { steps: Object.fromEntries(data.shots.map((shot, i) => [shot.id, { n:i+1, title:"Replace with your step", frames:[{img:"evidence",at:0,box:[80,120,480,160],label:"Replace screenshot"}] }])) };
+    data.assets = { evidence: "assets/evidence.svg" };
+    fs.mkdirSync(path.join(dir,"assets"),{recursive:true});
+    fs.copyFileSync(path.join(ROOT,"templates","film","evidence.svg"),path.join(dir,"assets","evidence.svg"));
+  }
   fs.mkdirSync(path.dirname(draw), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(data, null, 2) + "\n");
-  fs.copyFileSync(path.join(ROOT, "templates", "film", "draw.js"), draw);
+  fs.copyFileSync(path.join(ROOT, "templates", "film", o.mode === "tutorial" ? "tutorial.js" : "draw.js"), draw);
   fs.copyFileSync(path.join(ROOT, "templates", "film", "score.js"), path.join(path.dirname(draw), "score.js"));
   fs.copyFileSync(
     path.join(ROOT, "templates", "film", "DIRECTOR.md"),

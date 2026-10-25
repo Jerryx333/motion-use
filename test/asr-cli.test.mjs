@@ -93,3 +93,15 @@ test('snapshot replay freezes ASR model and parameters over project, CLI and env
   assert.equal(result.narration_check.status,'SKIPPED');
   assert.deepEqual(result.narration_check.config,{...frozen,comparatorVersion:COMPARATOR_VERSION});
 });
+
+test('scoped narration waiver preserves ASR, transcript hashes and unreviewed listening',t=>{
+  const p=fixture(t,{heard:'1加56'});
+  const r=cli('voiceover','check',p.dir,'--allow-narration-flags','reviewed this flagged clip separately','--json');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const result=JSON.parse(r.stdout);
+  assert.equal(result.status,'WARNING');assert.equal(result.human_review,'UNREVIEWED');
+  assert.equal(result.cache.hits,1);assert.equal(result.lines[0].waiver.heard,'1加56');
+  assert.equal(result.lines[0].waiver.sha256,crypto.createHash('sha256').update(fs.readFileSync(p.audio)).digest('hex'));
+  const next=cli('voiceover','check',p.dir,'--json');
+  assert.equal(next.status,1,'a scoped CLI waiver never approves future invocations');
+});

@@ -187,3 +187,7 @@ include per-shot motion diagnostics; selected stills scope text checks to the
 requested time windows. See the [film contract](references/film.md).
 
 Batch course production: [workflow, recovery, narration review, chapters and delivery](references/course-workflow.md).
+
+### Tutorial and script review
+
+Use `motion-use init demo --mode tutorial` for screenshot steps; `motion-use script review demo --reviewer gemini` for a review saved for agent/author checks; `motion-use redact shot.png --box 40,80,300,60 --out private.png` for screenshot blur. Recommended order: script → review → voiceover listening → narrated draft → full release. See [tutorial and script review](docs/tutorial-and-script-review.md) for transports, facts/platforms, proportional steps and scoped narration waivers.

@@ -127,3 +127,9 @@ For quick information cards or an existing `brief.json`: `motion-use init <dir> 
 - Preserve user files; motion-use never overwrites outputs it did not write. Do not run two jobs on the same output folder.
 - Missing edge-tts: `uv tool install edge-tts`, then retry. Never disable narration as a workaround. edge-tts is a preview voice; public videos need suitably licensed speech (Azure).
 - Install and update through GitHub Releases; `motion-use upgrade` refreshes the CLI and this skill.
+
+## Tutorial and script review
+
+For screenshot tutorials, use `init --mode tutorial`, replace the illustrative evidence, and declare `data.steps` with per-shot frame ratios. Read `docs/tutorial-and-script-review.md` for `M.focusShot`, `M.steps`, subtitle-safe layout and `redact`.
+
+Follow script → LLM review → agent fact checks → author review → voiceover listening → narrated draft → full release. `script review <film> --reviewer gemini|chatgpt|claude` saves review evidence and risk checkboxes; never copy the rewrite wholesale. Declare immutable `brief.facts` and `brief.platforms`. `--plan` contacts no service; browser transport requires an already installed chrome-use with its reviewer adapter and a logged-in account. API transport needs an explicit model and provider key. Review state stays UNREVIEWED until actual review.

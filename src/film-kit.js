@@ -738,7 +738,7 @@ window.__filmKit = function (view, film) {
     c.restore();
   }
   // A stamped word: slams in (1.55 → 0.94 → 1) with a slight tilt, in a box or bare.
-  function stamp(c, t, text, at, { at: start = 0, until = Infinity, size = 150 * unit, color = ink().accent, rotate = -0.06, box = true, weight = 900, maxWidth = view.width * 0.86 } = {}) {
+  function stamp(c, t, text, at, { at: start = 0, until = Infinity, size = 150 * unit, color = ink().accent, rotate = -0.06, box = true, fill = null, weight = 900, maxWidth = view.width * 0.86 } = {}) {
     if (t < start || t > until + 0.18) return;
     c.font = fontOf(weight, size, false);
     size *= Math.min(1, maxWidth / (c.measureText(text).width + (box ? size * 0.6 : 0)));
@@ -751,6 +751,7 @@ window.__filmKit = function (view, film) {
     if (box) {
       c.font = fontOf(weight, size, false);
       const w = c.measureText(text).width + size * 0.6;
+      if (fill) { c.fillStyle = fill; c.fillRect(-w / 2, -size * .65, w, size * 1.3); }
       c.strokeStyle = color;
       c.lineWidth = size * 0.07;
       c.strokeRect(-w / 2, -size * 0.65, w, size * 1.3);
@@ -821,6 +822,53 @@ window.__filmKit = function (view, film) {
     c.clip();
     c.drawImage(img, dx, dy, dw, dh);
     c.restore();
+  }
+  // Content ends above the maximum three-line subtitle plate.
+  function tutorialLayout() {
+    const safe = view.safe ?? { x: view.width * .06, y: view.height * .08, w: view.width * .88, h: view.height * .82 };
+    const bottom = safe.y + safe.h - (view.vertical ? 250 : 160) * unit;
+    return { x: safe.x, y: safe.y, w: safe.w, h: Math.max(1, bottom - safe.y) };
+  }
+  // box is in source-image pixels; rect is in canvas pixels. Recompute from t on every call.
+  function focusShot(c, t, image, box, rect = tutorialLayout(), options = {}) {
+    const { at = 0, label: text, maxZoom = 3, color = "#df3030" } = options;
+    if (t < at) return null;
+    const img = typeof image === "string" ? window.filmAssets?.[image] : image;
+    if (!img) throw new Error(`focusShot: no image "${image}"; declare it under film.json assets`);
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    const b = Array.isArray(box) ? { x: box[0], y: box[1], w: box[2], h: box[3] } : box;
+    const r = Array.isArray(rect) ? { x: rect[0], y: rect[1], w: rect[2], h: rect[3] } : rect;
+    if (![iw,ih,b?.w,b?.h,r?.w,r?.h].every(v => Number.isFinite(v) && v > 0) || ![b.x,b.y,r.x,r.y].every(Number.isFinite) || b.x < 0 || b.y < 0 || b.x+b.w > iw || b.y+b.h > ih || !Number.isFinite(maxZoom) || maxZoom < 1) throw new Error("focusShot: positive image/rect and an in-bounds source box required");
+    const base = Math.max(r.w / iw, r.h / ih);
+    const q = easings.cubicInOut((t-at) / .55);
+    const scale = lerp(base, Math.max(base, Math.min(base*maxZoom, r.w*.8/b.w, r.h*.8/b.h)), q);
+    const dw = iw*scale, dh = ih*scale;
+    const dx = Math.min(r.x, Math.max(r.x+r.w-dw, r.x+r.w/2-(b.x+b.w/2)*scale));
+    const dy = Math.min(r.y, Math.max(r.y+r.h-dh, r.y+r.h/2-(b.y+b.h/2)*scale));
+    c.save(); c.beginPath(); c.roundRect(r.x,r.y,r.w,r.h,20*unit); c.clip();
+    c.drawImage(img,dx,dy,dw,dh);
+    const target = { x:dx+b.x*scale, y:dy+b.y*scale, w:b.w*scale, h:b.h*scale };
+    const pop = 1 + .12 * Math.sin(Math.PI*clamp((t-at)/.35)) * (1-clamp((t-at)/.35));
+    c.strokeStyle=color; c.lineWidth=5*unit;
+    c.strokeRect(target.x-target.w*(pop-1)/2,target.y-target.h*(pop-1)/2,target.w*pop,target.h*pop);
+    if (text) stamp(c,t,text,[r.x+r.w-Math.min(r.w*.45,210*unit)*.9-20*unit,r.y+60*unit],{at,size:32*unit,maxWidth:Math.min(r.w*.45,210*unit),color,fill:"#fff",rotate:-.04});
+    c.restore();
+    return { ...target, image: {x:dx,y:dy,w:dw,h:dh}, rect:r };
+  }
+  function steps(c, t, step, { start = 0, duration = 1, rect = tutorialLayout() } = {}) {
+    if (!step || !Array.isArray(step.frames) || !step.frames.length || !(duration > 0)) throw new Error("steps: frames and positive duration required");
+    const frames = step.frames;
+    if (frames.some((f,i) => !Number.isFinite(f.at) || f.at < 0 || f.at >= 1 || (i===0 ? f.at!==0 : f.at<=frames[i-1].at))) throw new Error("steps: frame ratios must increase from 0 to below 1");
+    if (t < start || t >= start+duration) return null;
+    const ratio = (t-start)/duration;
+    let i=frames.length-1; while(i>0 && frames[i].at>ratio) i--;
+    const f=frames[i], header=110*unit, dots=45*unit;
+    stamp(c,t,`${step.n}. ${step.title}`,[rect.x+rect.w/2,rect.y+45*unit],{at:start,size:38*unit,maxWidth:rect.w*.58,rotate:0,box:false});
+    const image=typeof f.img === "string" ? window.filmAssets?.[f.img] : f.img;
+    const imageRatio=(image?.naturalHeight||image?.height)/(image?.naturalWidth||image?.width);
+    const result=focusShot(c,t,f.img,f.box,{x:rect.x,y:rect.y+header,w:rect.w,h:Math.max(1,Math.min(rect.h-header-dots,rect.w*imageRatio))},{at:start+f.at*duration,label:f.label});
+    frames.forEach((_,n)=>{c.beginPath();c.arc(rect.x+rect.w/2+(n-(frames.length-1)/2)*24*unit,rect.y+rect.h-15*unit,6*unit,0,Math.PI*2);c.fillStyle=n===i?ink().accent:"#aaa";c.fill();});
+    return {index:i,ratio,...result};
   }
   // Whole-frame looks, drawn last: "mono", "tint" (color), "duotone" (dark → light).
   function grade(c, mode = "mono", { color = ink().accent, dark = ink().ink, light = ink().bg, amount = 1 } = {}) {
@@ -1015,6 +1063,7 @@ window.__filmKit = function (view, film) {
     spotlight,
     cursor,
     cover,
+    focusShot, steps, tutorialLayout,
     grade,
     grain,
     vignette,

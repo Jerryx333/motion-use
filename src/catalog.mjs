@@ -32,6 +32,7 @@ const card = (
     "Procedural motion study; illustrative objects, not a real product recording.",
 });
 export const CARDS = [
+  card("shot", "tutorial-steps", "手把手步骤 · Tutorial steps", "Explain a real screenshot step by step.", "paper", "Focus on a source-pixel box, mark it, switch screenshots by shot-duration ratio.", ["Replace the illustrative screenshot with real evidence.", "Keep content above the subtitle area."], { maxZoom:3, frameAt:[0,.5] }),
   card(
     "style",
     "whiteboard",

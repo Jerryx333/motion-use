@@ -3,6 +3,7 @@
 export const PRODUCT_TYPES = ["developer-tool", "data-explainer", "education", "hardware", "brand"];
 export const MATERIAL_TYPES = ["screenshot", "recording", "document", "data", "text", "diagram", "object"];
 const FIT = {
+  "tutorial-steps": [["education", "developer-tool"], ["screenshot", "document"], "A real interface needs ordered instructions and a focused screenshot for each step."],
   whiteboard: [["education", "data-explainer", "developer-tool"], ["diagram", "text"], "The viewer needs to follow a causal chain and retain earlier marks."],
   editorial: [["developer-tool", "data-explainer", "education"], ["document", "screenshot"], "A real document or screenshot contains the evidence; one annotation explains it."],
   kinetic: [["brand", "developer-tool"], ["text"], "One short phrase is the actual message, rather than a replacement for a missing demonstration."],
