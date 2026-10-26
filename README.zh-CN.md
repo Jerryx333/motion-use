@@ -195,3 +195,7 @@ still/render 会立即报错。子命令支持 `--help`。
 整体提速可设置 `pace:1.25`，重新生成旁白再 retime；镜头编排使用
 `M.shotTime(t,id)`，配合 `authoredDuration` 或 `retime --scale-timing`。
 装饰文字用 `M.texture(c,ctx=>{...})`，普通文字继续检查。
+
+### Tutorial and script review
+
+Use `motion-use init demo --mode tutorial` for screenshot steps; `motion-use script review demo --reviewer gemini` for a review saved for agent/author checks; `motion-use redact shot.png --box 40,80,300,60 --out private.png` for screenshot blur. Recommended order: script → review → voiceover listening → narrated draft → full release. See [tutorial and script review](docs/tutorial-and-script-review.md) for transports, facts/platforms, proportional steps and scoped narration waivers.

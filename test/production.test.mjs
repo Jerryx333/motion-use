@@ -69,7 +69,7 @@ const wav = (file, seconds = 1, frequency = 400) =>
   );
 
 test("all catalog studies validate, seek deterministically, and gallery export preserves existing work", () => {
-  assert.equal(new Set(CARDS.map((c) => c.id)).size, 12);
+  assert.equal(new Set(CARDS.map((c) => c.id)).size, 13);
   const scope = { window: {} };
   vm.runInNewContext(
     fs.readFileSync(
@@ -91,7 +91,7 @@ test("all catalog studies validate, seek deterministically, and gallery export p
   }
   const dir = path.join(temp(), "gallery"),
     r = writeGallery(dir);
-  assert.equal(r.cards, 12);
+  assert.equal(r.cards, CARDS.length);
   assert.match(fs.readFileSync(r.gallery, "utf8"), /prefers-reduced-motion/);
   assert.throws(() => writeGallery(dir), /already exists/);
 });
