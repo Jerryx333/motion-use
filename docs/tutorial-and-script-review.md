@@ -5,7 +5,9 @@ Start with `motion-use init tutorial-demo --mode tutorial --lang zh`. The starte
 Recommended order: script → LLM review and agent fact checks → author review → voiceover listening → draft with narration/music → full release. `render --quality draft` keeps narration and music unless their disabling flags are passed. Review one language/format before rendering all variants.
 
 ```sh
+motion-use script lint tutorial-demo
 motion-use script review tutorial-demo --reviewer gemini --plan
+motion-use script review tutorial-demo --reviewer codex --transport command --command '["codex","exec","--skip-git-repo-check","-s","read-only","-"]' --focus voice --out tutorial-demo/reviews/02-voice.md
 motion-use script review tutorial-demo --reviewer gemini --out tutorial-demo/reviews/01-script-llm.md
 motion-use script review tutorial-demo --reviewer chatgpt --transport api --model YOUR_MODEL
 motion-use script review tutorial-demo --reviewer claude --response saved-review.json --out tutorial-demo/reviews/02-script-llm.md
@@ -13,6 +15,8 @@ motion-use redact screenshot.png --box 40,80,300,60 --box 40,160,300,60 --out sc
 ```
 
 `--transport browser` (default) requires a logged-in Chrome, `chrome-use` and its `<reviewer>/ask` site adapter. Install/configure these separately; review never installs tools or logs in for you. The current adapters are provided by third-party OpenCLI; browser availability and account UI changes can affect them. Requests use a fresh session and a new conversation; uncertain sends are never retried automatically. Inspect the conversation before retrying a timeout. `--transport api` requires an explicit model ID and `GEMINI_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; API calls use the provider's API billing.
+
+`--transport command` runs a local reviewer (`codex exec`, `claude -p`, any CLI) from a JSON argv array without a shell, sends the prompt on stdin and reads the answer from stdout; `--reviewer` is then a short label recorded in the evidence. A preamble before the JSON answer is tolerated. `--focus voice|facts|both` selects the pass: `voice` reviews only how the narration is said (see [references/narration-writing.md](../references/narration-writing.md)) and includes `script lint` findings; `both` (default) tags each issue 【事实】 or 【口语】.
 
 A `--plan` run writes the prompt without contacting a service. Use a fresh `--out` for the actual run. Responses must be JSON: `{"issues":["..."],"rewrite":"full script with picture notes","alternatives":["hook or title"]}`. `--response` imports that format without sending. The prompt, raw response, script hash and result remain next to the Markdown report. A malformed response is retained in the evidence JSON for repair/import. Existing reports are never overwritten.
 

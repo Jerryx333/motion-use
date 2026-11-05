@@ -19,10 +19,10 @@ Unless the user specifies a location, create films with `motion-use init <name>`
 Use `motion-use list --json` to find past projects; explicit paths such as `./draft` still work.
 Do not place new film projects in a product source repository by default.
 
-Before authoring film.json, drawing code or generating speech, write and review `SCRIPT.md`:
+Before authoring film.json, drawing code or generating speech, read [references/narration-writing.md](references/narration-writing.md) and talk to the author first (what to remember, what surprises, what they think, what to leave out; their words are the material, not the source documents), then write and review `SCRIPT.md`:
 opening frame/first line, shot actions with source evidence, spoken and displayed copy,
 screen text and ending action. Init's generated files are scaffolds. Save pass/revise plus
-concrete edits in `reviews/01-script.md`; fix failed points before production. The reviewer
+concrete edits in `reviews/01-script.md` (facts) and `reviews/02-voice.md` (spoken voice: `script lint`, then `script review --focus voice`); fix failed points before production. The reviewer
 gets only text at this stage. Check whether the opening earns attention, each line maps to
 an action, claims are supported, wording avoids filler/repeated patterns, and the ending
 acts on the subject. Continue through keyframe review, range-draft rhythm review and final

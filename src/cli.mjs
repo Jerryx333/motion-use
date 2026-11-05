@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { reviewScript } from "./script-review.mjs";
+import { lintFilmNarration, lintNarration, scriptTableShots } from "./narration-lint.mjs";
 import { redactImage } from "./redact.mjs";
 import {
   BriefError,
@@ -97,7 +98,12 @@ Usage: motion-use <command> [options]
   init [name|path]    Start a directed film (film.json + composition/draw.js + DIRECTOR.md); fill the brief
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
                       --mode tutorial generates screenshot steps; --mode template keeps the scene-template workflow; --style/--story also select it
+  script lint [film|SCRIPT.md]  Spoken-copy fingerprints (name reveals, moral tails, spoken lists, written
+                      register, a rule or number as the first line); reads the SCRIPT.md shot table when it has
+                      spoken copy (--lang, default zh), else film.json (--film forces it); warnings with evidence
   script review <film> --reviewer gemini|chatgpt|claude [--transport browser|api --model <id>]
+                      --transport command --command '["codex","exec","-"]' sends the prompt on stdin
+                      --focus voice|facts|both (default both: two separate passes in one report)
                       --plan writes the request only; --response <json> imports a saved review
   redact <image> --box x,y,w,h [--box ...] --out <new.png>  Blur private screenshot regions
   validate [brief]    Check a brief: fields, files, voiceover lengths, characters the fonts cannot draw
@@ -234,6 +240,9 @@ export async function main(argv) {
         mode: { type: "string" },
         reviewer: { type: "string" },
         transport: { type: "string" },
+        focus: { type: "string" },
+        film: { type: "boolean" },
+        command: { type: "string" },
         model: { type: "string" },
         response: { type: "string" },
         box: { type: "string", multiple: true },
@@ -2535,7 +2544,27 @@ async function teachingCmd(o, [input, ...extra]) {
 }
 
 async function scriptCmd(o, [action, project, ...extra]) {
-  if(action!=="review"||!project||extra.length)return fail("script review <film> --reviewer gemini|chatgpt|claude",o.json);
+  if(action==="lint"&&!extra.length){
+    // A SCRIPT.md (or a film directory whose SCRIPT.md has a shot table) is linted before film.json.
+    const target=path.resolve(project??".");
+    const scriptFile=/\.md$/i.test(target)?target:fs.existsSync(path.join(target,"SCRIPT.md"))?path.join(target,"SCRIPT.md"):null;
+    const tableShots=scriptFile&&!o.film?scriptTableShots(fs.readFileSync(scriptFile,"utf8")):null;
+    const file=tableShots?scriptFile:resolveProject(project??".");
+    const film=tableShots?null:JSON.parse(fs.readFileSync(file,"utf8"));
+    const results=tableShots?[lintNarration(tableShots,o.lang??"zh")]:lintFilmNarration(film);
+    const count=results.reduce((n,r)=>n+r.findings.length,0);
+    if(o.json)console.log(JSON.stringify({ok:true,status:count?"WARN":"PASS",film:file,results},null,2));
+    else{
+      for(const r of results){
+        if(r.skipped){console.log(`${r.lang}: ${r.skipped}`);continue;}
+        console.log(`${r.lang}: ${r.findings.length} finding(s) · ${r.stats?.sentences??0} sentences, mean ${r.stats?.meanUnits??0} units, first person ${r.stats?.firstPerson??0}`);
+        for(const f of r.findings)console.log(`  ${f.rule}${f.shot?` [${f.shot}]`:""}: "${[...f.text].slice(0,40).join("")}"\n    ${f.message}`);
+      }
+      console.log(count?"warnings are evidence, not verdicts: rewrite or keep each line on purpose":"no spoken-copy fingerprints found; listen to the read anyway");
+    }
+    return 0;
+  }
+  if(action!=="review"||!project||extra.length)return fail("script lint [film] | script review <film> --reviewer gemini|chatgpt|claude|<label>",o.json);
   const result=await reviewScript(project,o);
   console.log(o.json?JSON.stringify(result,null,2):`${result.status}: ${result.file??result.prompt}`); return 0;
 }

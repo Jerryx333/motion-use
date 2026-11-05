@@ -2,6 +2,7 @@
 
 State: draft. Review this text before authoring film.json, drawing code, speech or music.
 The generated film.json/draw.js are scaffolds, not an approved script.
+Before writing the spoken copy, read references/narration-writing.md: talk to the author first.
 
 Audience and intended takeaway: TODO
 Opening frame (concrete subject and visible action): TODO
