@@ -7,6 +7,9 @@ import { lintNarration, lintFilmNarration, narrationText } from "../src/narratio
 import { scriptReviewPrompt, requestScriptReview, parseScriptReview, reviewScript, reviewCommand } from "../src/script-review.mjs";
 import { initFilm, validateFilm } from "../src/film.mjs";
 
+// Keep these tests independent of a stop-slop installed on this machine (test/stop-slop.test.mjs mocks it).
+process.env.MOTION_USE_STOP_SLOP = path.join(os.tmpdir(), "mu-no-stop-slop");
+
 const fixture = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/narration-${name}.json`, import.meta.url), "utf8"));
 const rules = (r) => r.findings.reduce((m, f) => ({ ...m, [f.rule]: (m[f.rule] ?? 0) + 1 }), {});
 
@@ -200,7 +203,7 @@ test("script lint <dir>, validate and the CLI report drift between SCRIPT.md and
   fs.writeFileSync(path.join(dir, "SCRIPT.md"), tableOf(used.map((s) => ({ id: s.id, narration: "我先说一句人话。" }))));
 
   const r = spawnSync(process.execPath, [new URL("../bin/motion-use.mjs", import.meta.url).pathname, "script", "lint", dir, "--json"], {
-    encoding: "utf8", env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1" },
+    encoding: "utf8", env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1", MOTION_USE_STOP_SLOP: path.join(dir, "no-stop-slop") },
   });
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);

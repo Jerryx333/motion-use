@@ -13,7 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { reviewScript } from "./script-review.mjs";
-import { lintScriptAndFilm } from "./narration-lint.mjs";
+import { lintScriptAndFilm, scriptTable } from "./narration-lint.mjs";
+import { findStopSlop, stopSlopNarration } from "./stop-slop.mjs";
 import { redactImage } from "./redact.mjs";
 import {
   BriefError,
@@ -102,6 +103,7 @@ Usage: motion-use <command> [options]
                       register, a rule or number as the first line) in the SCRIPT.md shot table and in film.json,
                       which the voiceover reads; script-drift where they say different things (--film: film.json only;
                       the table language comes from its header, e.g. 口播（zh）, else --lang); warnings with evidence
+                      Chinese copy also goes through stop-slop (1.2.0+, on PATH or MOTION_USE_STOP_SLOP) when installed
   script review <film> --reviewer gemini|chatgpt|claude [--transport browser|api --model <id>]
                       --transport command --command '["codex","exec","-"]' sends the prompt on stdin
                       --focus voice|facts|both (default both: two separate passes in one report)
@@ -2561,9 +2563,24 @@ async function scriptCmd(o, [action, project, ...extra]) {
     const film=filmFile?JSON.parse(fs.readFileSync(filmFile,"utf8")):null;
     const script=scriptFile&&!o.film?fs.readFileSync(scriptFile,"utf8"):null;
     const results=lintScriptAndFilm({script,film,lang:o.lang});
+    // Second layer: stop-slop's spoken mode on every Chinese script it can see; optional, never fails the lint.
+    const zh=results.filter(r=>r.source!=="drift"&&!r.skipped&&/^zh/i.test(r.lang));
+    let stopSlop=null;
+    if(zh.length){
+      const tool=findStopSlop();
+      stopSlop=tool.installed?{installed:true,version:tool.version,runs:[]}:{installed:false,reason:tool.reason,install:tool.install};
+      const table=script?scriptTable(script):null;
+      for(const r of tool.installed?zh:[]){
+        const fromTable=r.source==="SCRIPT.md";
+        const run=stopSlopNarration(fromTable?table.shots:film.shots,r.lang,tool,fromTable?{pathOf:i=>`SCRIPT.md row ${i+1}`}:{});
+        if(!run)continue;
+        r.findings.push(...run.findings);
+        stopSlop.runs.push({source:r.source,lang:r.lang,version:run.version,...(run.error?{error:run.error}:{}),items:run.items});
+      }
+    }
     const count=results.reduce((n,r)=>n+r.findings.length,0);
     const drift=results.find(r=>r.source==="drift");
-    if(o.json)console.log(JSON.stringify({ok:true,status:count?"WARN":"PASS",film:filmFile,script:script?scriptFile:null,drift:drift?drift.findings.length:null,results},null,2));
+    if(o.json)console.log(JSON.stringify({ok:true,status:count?"WARN":"PASS",film:filmFile,script:script?scriptFile:null,drift:drift?drift.findings.length:null,results,stop_slop:stopSlop},null,2));
     else{
       for(const r of results){
         const label=`${r.source??"film.json"} ${r.lang}`;
@@ -2572,6 +2589,8 @@ async function scriptCmd(o, [action, project, ...extra]) {
         else console.log(`${label}: ${r.findings.length} finding(s) · ${r.stats?.sentences??0} sentences, mean ${r.stats?.meanUnits??0} units, first person ${r.stats?.firstPerson??0}`);
         for(const f of r.findings)console.log(`  ${f.rule}${f.shot?` [${f.shot}]`:""}: "${[...f.text].slice(0,40).join("")}"\n    ${f.message}`);
       }
+      if(stopSlop&&!stopSlop.installed)console.log(`stop-slop second-layer check skipped (${stopSlop.reason}); install: ${stopSlop.install}`);
+      for(const run of stopSlop?.runs??[])if(run.error)console.log(`stop-slop ${run.source} ${run.lang} skipped: ${run.error}`);
       console.log(count?"warnings are evidence, not verdicts: rewrite or keep each line on purpose":"no spoken-copy fingerprints found; listen to the read anyway");
     }
     return 0;

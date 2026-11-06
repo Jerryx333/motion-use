@@ -100,4 +100,23 @@ motion-use script review my-film --reviewer gemini --focus facts --out my-film/r
 
 Thresholds come from a shipped internal explainer that reviewers recognised as machine-written within the first second (19 findings there; it stays private) and the synthetic pair in `test/fixtures/`: a script in the same shape (`narration-ai.json`, 16 findings), a first rewrite that over-corrected (10 findings there: frame-open, filler, symmetric-pair; also private) and the same fictional facts said by a colleague (`narration-human.json`, none). They are warnings: keep a line on purpose and say why in DIRECTOR.md. Rules exist for Chinese and English; other languages are skipped.
 
+## Second layer: stop-slop
+
+`script lint` counts what a summarised document leaves behind. [stop-slop](https://github.com/leeguooooo/stop-slop-zh) is a separate Chinese AI-writing detector with densities measured on human and model text, and it counts what this lint does not: semicolons spread one per shot (the lint's `semicolon-chain` needs two in one shot), adjacent sentences built the same way, 「不是…而是…」, rated suspense (「最绕的是」), a colon introducing the point, translationese.
+
+When `stop-slop` 1.2.0 or later is on PATH (or named by `MOTION_USE_STOP_SLOP`), `script lint` runs its spoken mode (`stop-slop detect --shots - --json`, one entry per shot) on every Chinese script it reads, SCRIPT.md and film.json alike. Flagged A (wording), B (structure) and F (punctuation) items become findings named `stop-slop/<id>`, such as `stop-slop/F2` or `stop-slop/R13b`, with its advice and the human reference density. `--json` keeps its raw items under `stop_slop`. Without it the lint says so, prints the install line and carries on:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/stop-slop-zh/main/install.sh | sh
+```
+
+Its X (change with care) and H (human judgement) items are never reported as problems. Read them as a guard rail against over-correcting (above): a question in the narration, a metaphor, items joined inside one sentence, a sentence length kept for rhythm. Leave those alone unless the line is wrong for another reason (stop-slop-zh `SKILL.md`, section 8). `stop-slop compare before.txt after.txt` shows whether a rewrite only moved the fingerprints around.
+
+`script review` uses it too. Its findings join the lint evidence the reviewer sees, and with stop-slop 1.3.0 or later the voice pass (`--focus voice` or `both`) also gets the joins between neighbouring shots from `stop-slop candidates --shots -`: the end of one shot and the start of the next. The reviewer is asked whether each shot picks up the one before it or restarts the subject, using the criteria in stop-slop-zh `references/semantic.md`, section 2. The evidence file records the stop-slop version and how many joins were sent. To look at them yourself:
+
+```sh
+node -e 'const f=require("./film.json");console.log(JSON.stringify(f.shots.map(s=>({id:s.id,text:s.narration?.zh?.say??s.narration?.zh??s.narration})).filter(x=>typeof x.text==="string")))' \
+  | stop-slop candidates --shots -
+```
+
 Sources: two independent reviews of that film (Claude and Codex); the author's Chinese anti-slop checklist (程度副词、排比三件套、金句收尾、名词化); interview-first drafting ([Make AI interview you before it writes anything](https://mediacopilot.substack.com/p/make-ai-interview-you-before-it-writes)); Poynter's mouth edit (read it aloud and revise what sounds read); Wikipedia's [Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing) for the sentence-level layer; [Verbalized Sampling](https://arxiv.org/abs/2510.01171) for asking a reviewer for several openings ranked by how typical they are.

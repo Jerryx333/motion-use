@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { lintScriptAndFilm } from './narration-lint.mjs';
+import { lintScriptAndFilm, scriptTable } from './narration-lint.mjs';
+import { findStopSlop, stopSlopCandidates, stopSlopNarration } from './stop-slop.mjs';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
 const reviewers = new Set(['gemini','chatgpt','claude']);
@@ -27,7 +28,7 @@ const VOICE_CHECKLIST = [
   '每个镜头的旁白不必长成同一个形状（主题句 → 细节 → 收束），相邻镜头换开头方式。',
   '别矫枉过正：不要先报数量搭框架（有两个条件 / 第一样是…），不要凑对称句，不要用「这块」「记住…就行」这类填充词，不要为了像口播把句子硬拆成碎片；结论不能比规则说得更满（倍率 0.7 不是「打不动」）。',
 ];
-export function scriptReviewPrompt(script, brief = {}, { focus = 'both', lint = [] } = {}) {
+export function scriptReviewPrompt(script, brief = {}, { focus = 'both', lint = [], cohesion = [] } = {}) {
   if (!FOCUS.has(focus)) throw new Error('--focus must be voice, facts or both');
   const facts = brief.facts ?? [], platforms = brief.platforms ?? [];
   for (const [name,value] of Object.entries({facts,platforms})) if (!Array.isArray(value) || value.length>100 || value.some(x=>typeof x!=='string'||!x.trim()||x.length>500)) throw new Error(`brief.${name} must be an array of nonempty strings (up to 100)`);
@@ -36,7 +37,7 @@ export function scriptReviewPrompt(script, brief = {}, { focus = 'both', lint = 
   if (platforms.some(x=>OVERSEAS.test(x))) checklist.push('海外发布编辑检查：核对链接、推广披露、版权和夸张承诺；不得声称平台已批准。');
   if (!checklist.length) checklist.push('未指定平台：检查事实、夸张承诺、诱导互动、版权与推广披露，待作者补充平台约束。');
   const findings = lint.flatMap(r => r.findings ?? []).map(f => `- ${f.rule}${f.shot ? ` [${f.shot}]` : ''}：「${[...f.text].slice(0, 60).join('')}」`);
-  const voice = `## 口语轮（只改说法，不改事实）\n听起来要像一个具体的人在对 brief.audience 说话，不像在念文档摘要。逐条照做：\n${VOICE_CHECKLIST.map((x,i)=>`${i+1}. ${x}`).join('\n')}\n自动检查已发现（证据，不是结论，逐条判断）：\n${findings.length ? findings.join('\n') : '- 无'}\n只顺语法、句子结构不变，不算完成这一轮；第一句尤其要从画面重写。`;
+  const voice = `## 口语轮（只改说法，不改事实）\n听起来要像一个具体的人在对 brief.audience 说话，不像在念文档摘要。逐条照做：\n${VOICE_CHECKLIST.map((x,i)=>`${i+1}. ${x}`).join('\n')}\n自动检查已发现（证据，不是结论，逐条判断）：\n${findings.length ? findings.join('\n') : '- 无'}\n只顺语法、句子结构不变，不算完成这一轮；第一句尤其要从画面重写。${cohesion.length ? `\n镜头衔接候选（stop-slop candidates：上一镜头的末句 → 下一镜头的首句）。逐条判断下一镜头有没有接住上一镜头，还是每个镜头都重新起头、各说各的；判据见 stop-slop-zh references/semantic.md 第 2 节。接不上的写进 issues，并在改稿里补上衔接：\n${cohesion.slice(0, 40).map(c => `- [${c.prev_shot} → ${c.shot}] 「${[...(c.prev_tail ?? '')].slice(-40).join('')}」→「${[...(c.next_head ?? '')].slice(0, 40).join('')}」`).join('\n')}` : ''}`;
   const factsPass = `## 事实轮\n审查开头三秒、步骤、节奏、结尾与目标时长；核对数字与规则是否与事实清单一致。不得增加未经核实的事实，不得为了吸引点击改动事实。\n编辑清单：\n${checklist.join('\n')}`;
   const passes = focus === 'voice' ? [voice] : focus === 'facts' ? [factsPass] : [factsPass, voice];
   const tag = focus === 'both' ? 'issues 里每条以【事实】或【口语】开头。' : '';
@@ -131,16 +132,32 @@ export async function reviewScript(project, options={}) {
   else if(!reviewers.has(reviewer))throw new Error('--reviewer must be gemini, chatgpt or claude');
   // Lint the SCRIPT.md shot table and film.json (what the voiceover reads), and where they drift apart.
   const lint=lintScriptAndFilm({script,film});
-  const prompt=scriptReviewPrompt(script,film.brief,{focus,lint});
+  // stop-slop, when installed: its spoken-mode findings join the evidence, and the voice pass gets the shot-to-shot joins.
+  const env=options.env??process.env, tool=findStopSlop(env), table=scriptTable(script);
+  const stopSlop=tool.installed?{version:tool.version}:{installed:false,install:tool.install};
+  if(tool.installed){
+    for(const r of lint){
+      if(r.source==='drift'||r.skipped)continue;
+      const fromTable=r.source==='SCRIPT.md';
+      const run=stopSlopNarration(fromTable?table.shots:film.shots,r.lang,tool,{env,...(fromTable?{pathOf:i=>`SCRIPT.md row ${i+1}`}:{})});
+      if(run&&!run.error)r.findings.push(...run.findings);
+    }
+    if(focus!=='facts'){
+      const said=table??{shots:film.shots,lang:null};
+      const c=stopSlopCandidates(said.shots,said.lang??(film.languages??['zh'])[0],tool,{env});
+      if(c){stopSlop.cohesion=c.cohesion; if(c.error)stopSlop.error=c.error;}
+    }
+  }
+  const prompt=scriptReviewPrompt(script,film.brief,{focus,lint,cohesion:stopSlop.cohesion??[]});
   const output=path.resolve(options.out??path.join(dir,'reviews','00-script-llm.md'));
   const evidence=output+'.json', promptFile=output+'.prompt.txt';
   for(const target of [output,evidence,promptFile])if(fs.existsSync(target))throw new Error(`review output already exists: ${target}; choose a fresh --out`);
   fs.mkdirSync(path.dirname(output),{recursive:true});
   // Always retain the exact request before sending; never retry a timed-out write.
   fs.writeFileSync(promptFile,prompt,{flag:'wx'});
-  if(options.plan)return {ok:true,status:'PREPARED',prompt:promptFile,reviewer,transport,focus};
+  if(options.plan)return {ok:true,status:'PREPARED',prompt:promptFile,reviewer,transport,focus,stop_slop:{...stopSlop,cohesion:stopSlop.cohesion?.length??null}};
   const raw=options.response?fs.readFileSync(options.response,'utf8'):await requestScriptReview(prompt,{...options,reviewer,transport,cwd:dir});
-  fs.writeFileSync(evidence,JSON.stringify({reviewer,transport:options.response?'import':transport,focus,command:transport==='command'&&!options.response?reviewCommand(options.command):null,model:options.model??null,script_sha256:hash(script),prompt_sha256:hash(prompt),human_review:'UNREVIEWED',raw},null,2)+'\n',{flag:'wx'});
+  fs.writeFileSync(evidence,JSON.stringify({reviewer,transport:options.response?'import':transport,focus,command:transport==='command'&&!options.response?reviewCommand(options.command):null,model:options.model??null,script_sha256:hash(script),prompt_sha256:hash(prompt),stop_slop:{...stopSlop,cohesion:stopSlop.cohesion?.length??null},human_review:'UNREVIEWED',raw},null,2)+'\n',{flag:'wx'});
   const review=parseScriptReview(raw);
   const risks=reviewRisks(review.rewrite,script,film.brief?.facts,film.brief?.platforms);
   const bullets=xs=>xs.length?xs.map(x=>`- ${x}`).join('\n'):'- 无';
