@@ -159,13 +159,13 @@ export function lintNarration(shots, lang, { pathOf = (i) => `$.shots[${i}].narr
 }
 
 /**
- * Spoken copy from a SCRIPT.md shot table: the column whose header names spoken copy
- * (Spoken / Narration / 口播 / 旁白). The script is written before film.json, so a script
- * review lints this, not film.json. Returns null when no such table exists.
+ * The spoken-copy table of a SCRIPT.md: the column whose header names spoken copy
+ * (Spoken / Narration / 口播 / 旁白) and, when the header says so (「口播（zh）」), its language.
+ * Returns {shots, lang} or null when no such table exists.
  */
-export function scriptTableShots(markdown) {
+export function scriptTable(markdown) {
   const rows = String(markdown).split("\n").filter((l) => /^\s*\|.*\|\s*$/.test(l));
-  const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((x) => x.trim());
+  const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((x) => x.trim().replace(/\\\|/g, "|"));
   for (let i = 0; i + 1 < rows.length; i++) {
     const head = cells(rows[i]);
     const col = head.findIndex((h) => /spoken|narration|口播|旁白/i.test(h));
@@ -175,11 +175,74 @@ export function scriptTableShots(markdown) {
       if (/^[\s|:-]+$/.test(l)) break;
       const c = cells(l);
       if (c.length !== head.length) break;
-      if (c[col] && !/^todo$/i.test(c[col])) shots.push({ id: c[0] || String(shots.length), narration: c[col] });
+      if (c[col] && !/^todo$/i.test(c[col])) shots.push({ id: c[0] || String(shots.length), narration: c[col].replace(/<br\s*\/?>/gi, " ") });
     }
-    if (shots.length) return shots;
+    const lang = head[col].match(/[（(]\s*([a-z]{2}(?:-[a-z0-9]+)?)\s*[)）]/i)?.[1] ?? null;
+    if (shots.length) return { shots, lang };
   }
   return null;
+}
+
+/**
+ * Spoken copy from a SCRIPT.md shot table (see scriptTable). The script is written before
+ * film.json, so a script review lints this. Returns null when no such table exists.
+ */
+export function scriptTableShots(markdown) {
+  return scriptTable(markdown)?.shots ?? null;
+}
+
+const sameWords = (a, b) => {
+  const norm = (s) => String(s ?? "").replace(/\s+/g, "");
+  return norm(a) === norm(b);
+};
+
+/**
+ * script-drift: the SCRIPT.md table and film.json disagree about what is said. The voiceover
+ * reads film.json, so a reviewed script that never reached film.json is not what ships.
+ * Compared shot by shot (id) in the table's language. Returns a lint result with source "drift".
+ */
+export function scriptDrift(table, film, lang) {
+  const findings = [];
+  const add = (shot, path, text, message) => findings.push({ rule: "script-drift", shot, path, text, message: `${message} (${GUIDE})` });
+  const shots = Array.isArray(film?.shots) ? film.shots : [];
+  const byId = new Map(shots.map((s, i) => [String(s?.id ?? i), { i, text: narrationText(s, lang) }]));
+  const inTable = new Set();
+  for (const row of table.shots) {
+    const id = String(row.id);
+    inTable.add(id);
+    const f = byId.get(id);
+    if (!f) add(id, "$.shots", row.narration, `SCRIPT.md speaks shot "${id}" but film.json has no shot with that id; the voiceover will not say it`);
+    else if (!f.text) add(id, `$.shots[${f.i}].narration`, row.narration, `SCRIPT.md speaks shot "${id}" but film.json has no ${lang} narration for it; the voiceover will not say it`);
+    else if (!sameWords(f.text, row.narration))
+      add(id, `$.shots[${f.i}].narration`, f.text, `film.json narration differs from SCRIPT.md, and the voiceover reads film.json. SCRIPT.md says: "${[...row.narration].slice(0, 60).join("")}"`);
+  }
+  for (const [id, f] of byId)
+    if (f.text && !inTable.has(id)) add(id, `$.shots[${f.i}].narration`, f.text, `film.json narrates shot "${id}" but the SCRIPT.md table has no spoken copy for it; the reviewed script and the read script differ`);
+  return { lang, source: "drift", findings, stats: null };
+}
+
+/**
+ * Lint what will be said: the SCRIPT.md table (when it has spoken copy) and film.json, which the
+ * voiceover reads. When both exist they are compared shot by shot (script-drift); film.json is
+ * linted again in the table's language only when it says something different.
+ * Each result carries `source`: "SCRIPT.md", "film.json" or "drift".
+ */
+export function lintScriptAndFilm({ script = null, film = null, lang } = {}) {
+  const table = script == null ? null : scriptTable(script);
+  const filmResults = (only) => lintFilmNarration(film).filter((r) => !only || only(r.lang)).map((r) => ({ ...r, source: "film.json" }));
+  if (!table) return film ? filmResults() : [];
+  const langs = Array.isArray(film?.languages) && film.languages.length ? film.languages : null;
+  const tableLang = table.lang ?? lang ?? langs?.[0] ?? "zh";
+  const results = [{ ...lintNarration(table.shots, tableLang, { pathOf: (i) => `SCRIPT.md row ${i + 1}` }), source: "SCRIPT.md" }];
+  if (!film) return results;
+  // A spoken column with no language tag in a multi-language film may hold every language in one cell.
+  if (!table.lang && langs && langs.length > 1) {
+    results.push({ lang: tableLang, source: "drift", findings: [], stats: null, skipped: "the SCRIPT.md spoken column names no language (write e.g. 口播（zh）) so it cannot be compared with film.json" });
+    return [...results, ...filmResults()];
+  }
+  const drift = scriptDrift(table, film, tableLang);
+  const base = (l) => String(l).toLowerCase().split("-")[0];
+  return [...results, ...filmResults((l) => base(l) !== base(tableLang) || drift.findings.length > 0), drift];
 }
 
 /** Lint every narrated language of a film.json object. */

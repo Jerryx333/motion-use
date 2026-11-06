@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { lintFilmNarration, lintNarration, scriptTableShots } from './narration-lint.mjs';
+import { lintScriptAndFilm } from './narration-lint.mjs';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
 const reviewers = new Set(['gemini','chatgpt','claude']);
@@ -129,9 +129,8 @@ export async function reviewScript(project, options={}) {
   const reviewer=options.reviewer??'gemini', transport=options.transport??'browser', focus=options.focus??'both';
   if(transport==='command'){ if(!LABEL.test(reviewer))throw new Error('--reviewer is a short label for a command reviewer (e.g. codex)'); if(!options.plan&&!options.response)reviewCommand(options.command); }
   else if(!reviewers.has(reviewer))throw new Error('--reviewer must be gemini, chatgpt or claude');
-  // The script comes before film.json: lint the SCRIPT.md shot table when it has spoken copy.
-  const tableShots=scriptTableShots(script);
-  const lint=tableShots?[lintNarration(tableShots,(film.languages??['zh'])[0])]:lintFilmNarration(film);
+  // Lint the SCRIPT.md shot table and film.json (what the voiceover reads), and where they drift apart.
+  const lint=lintScriptAndFilm({script,film});
   const prompt=scriptReviewPrompt(script,film.brief,{focus,lint});
   const output=path.resolve(options.out??path.join(dir,'reviews','00-script-llm.md'));
   const evidence=output+'.json', promptFile=output+'.prompt.txt';

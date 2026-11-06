@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { reviewScript } from "./script-review.mjs";
-import { lintFilmNarration, lintNarration, scriptTableShots } from "./narration-lint.mjs";
+import { lintScriptAndFilm } from "./narration-lint.mjs";
 import { redactImage } from "./redact.mjs";
 import {
   BriefError,
@@ -99,8 +99,9 @@ Usage: motion-use <command> [options]
                       fields up front: --subject --purpose --audience --tone --palette --length (seconds)
                       --mode tutorial generates screenshot steps; --mode template keeps the scene-template workflow; --style/--story also select it
   script lint [film|SCRIPT.md]  Spoken-copy fingerprints (name reveals, moral tails, spoken lists, written
-                      register, a rule or number as the first line); reads the SCRIPT.md shot table when it has
-                      spoken copy (--lang, default zh), else film.json (--film forces it); warnings with evidence
+                      register, a rule or number as the first line) in the SCRIPT.md shot table and in film.json,
+                      which the voiceover reads; script-drift where they say different things (--film: film.json only;
+                      the table language comes from its header, e.g. 口播（zh）, else --lang); warnings with evidence
   script review <film> --reviewer gemini|chatgpt|claude [--transport browser|api --model <id>]
                       --transport command --command '["codex","exec","-"]' sends the prompt on stdin
                       --focus voice|facts|both (default both: two separate passes in one report)
@@ -813,6 +814,7 @@ async function render(o, [briefPath]) {
       else printReport(c.report);
       return 1;
     }
+    warnScriptDrift(c);
     o._storage = projectSpace(briefPath, o);
     if (!o._storage.ok && !o.json) console.error("warning: estimated render storage exceeds current free space; see preflight --json for assumptions");
     o._progress?.("narration", "start");
@@ -1616,6 +1618,7 @@ async function voiceover(o, [briefPath, ...rest]) {
       else printReport(c.report);
       return 1;
     }
+    warnScriptDrift(c);
     if (o.engine && !["edge", "azure", "command"].includes(o.engine))
       return fail("--engine must be azure, edge or command", o.json);
     o._progress?.("tts", "start");
@@ -2543,21 +2546,30 @@ async function teachingCmd(o, [input, ...extra]) {
   return printOperational(o,r);
 }
 
+// SCRIPT.md and film.json disagree: say so on stderr before rendering or speaking film.json (stdout stays JSON).
+function warnScriptDrift(c) {
+  for (const w of c.report?.warnings ?? []) if (/^script-drift /.test(w.message)) console.error(`warning: ${w.message}`);
+}
+
 async function scriptCmd(o, [action, project, ...extra]) {
   if(action==="lint"&&!extra.length){
-    // A SCRIPT.md (or a film directory whose SCRIPT.md has a shot table) is linted before film.json.
+    // What is said: the SCRIPT.md shot table and film.json (which the voiceover reads), compared shot by shot.
     const target=path.resolve(project??".");
+    const dir=/\.md$/i.test(target)?path.dirname(target):target;
     const scriptFile=/\.md$/i.test(target)?target:fs.existsSync(path.join(target,"SCRIPT.md"))?path.join(target,"SCRIPT.md"):null;
-    const tableShots=scriptFile&&!o.film?scriptTableShots(fs.readFileSync(scriptFile,"utf8")):null;
-    const file=tableShots?scriptFile:resolveProject(project??".");
-    const film=tableShots?null:JSON.parse(fs.readFileSync(file,"utf8"));
-    const results=tableShots?[lintNarration(tableShots,o.lang??"zh")]:lintFilmNarration(film);
+    const filmFile=/\.md$/i.test(target)?(fs.existsSync(path.join(dir,"film.json"))?path.join(dir,"film.json"):null):resolveProject(project??".");
+    const film=filmFile?JSON.parse(fs.readFileSync(filmFile,"utf8")):null;
+    const script=scriptFile&&!o.film?fs.readFileSync(scriptFile,"utf8"):null;
+    const results=lintScriptAndFilm({script,film,lang:o.lang});
     const count=results.reduce((n,r)=>n+r.findings.length,0);
-    if(o.json)console.log(JSON.stringify({ok:true,status:count?"WARN":"PASS",film:file,results},null,2));
+    const drift=results.find(r=>r.source==="drift");
+    if(o.json)console.log(JSON.stringify({ok:true,status:count?"WARN":"PASS",film:filmFile,script:script?scriptFile:null,drift:drift?drift.findings.length:null,results},null,2));
     else{
       for(const r of results){
-        if(r.skipped){console.log(`${r.lang}: ${r.skipped}`);continue;}
-        console.log(`${r.lang}: ${r.findings.length} finding(s) · ${r.stats?.sentences??0} sentences, mean ${r.stats?.meanUnits??0} units, first person ${r.stats?.firstPerson??0}`);
+        const label=`${r.source??"film.json"} ${r.lang}`;
+        if(r.skipped){console.log(`${label}: ${r.skipped}`);continue;}
+        if(r.source==="drift")console.log(`${label}: ${r.findings.length?`${r.findings.length} shot(s) differ — the voiceover reads film.json`:"film.json says what SCRIPT.md says"}`);
+        else console.log(`${label}: ${r.findings.length} finding(s) · ${r.stats?.sentences??0} sentences, mean ${r.stats?.meanUnits??0} units, first person ${r.stats?.firstPerson??0}`);
         for(const f of r.findings)console.log(`  ${f.rule}${f.shot?` [${f.shot}]`:""}: "${[...f.text].slice(0,40).join("")}"\n    ${f.message}`);
       }
       console.log(count?"warnings are evidence, not verdicts: rewrite or keep each line on purpose":"no spoken-copy fingerprints found; listen to the read anyway");

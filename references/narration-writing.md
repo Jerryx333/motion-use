@@ -96,6 +96,7 @@ motion-use script review my-film --reviewer gemini --focus facts --out my-film/r
 | `filler` | two or more fillers that sound spoken but point at nothing (「这块」「记住…就行」「说白了」 / "basically", "just remember") |
 | `symmetric-pair` | two or more matched clause pairs (same opening, same length) |
 | `audience-drift` | the script says "you" twice or more and also names the role (玩家 / 用户 / player / user) twice or more |
+| `script-drift` | the SCRIPT.md shot table and film.json say different things for a shot, or a shot is spoken in one and not the other. The voiceover reads film.json, so a reviewed SCRIPT.md that never reached film.json is not what ships. `script lint` lists each shot; `validate`, `render` and `voiceover` print one summary warning |
 
 Thresholds come from a shipped internal explainer that reviewers recognised as machine-written within the first second (19 findings there; it stays private) and the synthetic pair in `test/fixtures/`: a script in the same shape (`narration-ai.json`, 16 findings), a first rewrite that over-corrected (10 findings there: frame-open, filler, symmetric-pair; also private) and the same fictional facts said by a colleague (`narration-human.json`, none). They are warnings: keep a line on purpose and say why in DIRECTOR.md. Rules exist for Chinese and English; other languages are skipped.
 

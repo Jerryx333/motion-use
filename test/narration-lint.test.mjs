@@ -150,3 +150,66 @@ test("addressing the player both as you and by role is flagged once", () => {
   ], "zh");
   assert.deepEqual(rules(r), { "audience-drift": 1 });
 });
+
+// SCRIPT.md and film.json both say what the film says; the voiceover reads film.json.
+const tableOf = (shots, header = "口播（zh）") =>
+  `# Script\n\n| Shot | 画面 | ${header} |\n|---|---|---|\n${shots.map((s) => `| ${s.id} | x | ${narrationText(s, "zh")} |`).join("\n")}\n`;
+
+test("script lint compares the SCRIPT.md table with film.json instead of trusting the table", async () => {
+  const { lintScriptAndFilm, scriptTable } = await import("../src/narration-lint.mjs");
+  const ai = fixture("ai"), human = fixture("human");
+  assert.deepEqual(scriptTable(tableOf(human.shots)).lang, "zh");
+
+  // Same words in both: the table is linted once, nothing drifts, film.json is not linted twice.
+  const same = lintScriptAndFilm({ script: tableOf(ai.shots), film: ai });
+  assert.deepEqual(same.map((r) => r.source), ["SCRIPT.md", "drift"]);
+  assert.equal(same[1].findings.length, 0);
+  assert.ok(same[0].findings.length >= 10);
+
+  // A rewritten SCRIPT.md that never reached film.json: the stale film.json is still linted, and every shot drifts.
+  const stale = lintScriptAndFilm({ script: tableOf(human.shots), film: ai });
+  assert.deepEqual(stale.map((r) => r.source), ["SCRIPT.md", "film.json", "drift"]);
+  assert.deepEqual(stale[0].findings, []);
+  assert.deepEqual(stale[1].findings.map((f) => f.rule).filter((r) => r === "name-reveal").length, 3);
+  const drift = stale[2].findings;
+  assert.ok(drift.length > 0 && drift.every((f) => f.rule === "script-drift"));
+
+  // Shots missing on either side.
+  const film = { languages: ["zh"], shots: [{ id: "a", narration: { zh: "看这两只狗。" } }, { id: "c", narration: { zh: "多出来的一句。" } }] };
+  const gap = lintScriptAndFilm({ script: tableOf([{ id: "a", narration: "看这两只 狗。" }, { id: "b", narration: "合成了。" }]), film });
+  const ids = gap.find((r) => r.source === "drift").findings.map((f) => f.shot).sort();
+  assert.deepEqual(ids, ["b", "c"], "whitespace alone is not drift; a missing shot on either side is");
+
+  // A spoken column with no language in a multi-language film cannot be compared.
+  const multi = lintScriptAndFilm({ script: tableOf(film.shots, "Spoken copy per language"), film: { ...film, languages: ["zh", "en"] } });
+  assert.match(multi.find((r) => r.source === "drift").skipped, /names no language/);
+  assert.deepEqual(multi.filter((r) => r.source === "film.json").map((r) => r.lang), ["zh", "en"]);
+});
+
+test("script lint <dir>, validate and the CLI report drift between SCRIPT.md and film.json", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mu-drift-"));
+  initFilm({ lang: "zh", format: "landscape" }, dir);
+  const data = JSON.parse(fs.readFileSync(path.join(dir, "film.json"), "utf8"));
+  data.voiceover = false;
+  data.languages = ["zh"];
+  const ai = fixture("ai");
+  data.shots = data.shots.map((s, i) => ({ ...s, id: ai.shots[i]?.id ?? s.id, narration: ai.shots[i]?.narration }));
+  fs.writeFileSync(path.join(dir, "film.json"), JSON.stringify(data, null, 2));
+  const used = data.shots.filter((s) => s.narration);
+  fs.writeFileSync(path.join(dir, "SCRIPT.md"), tableOf(used.map((s) => ({ id: s.id, narration: "我先说一句人话。" }))));
+
+  const r = spawnSync(process.execPath, [new URL("../bin/motion-use.mjs", import.meta.url).pathname, "script", "lint", dir, "--json"], {
+    encoding: "utf8", env: { ...process.env, MOTION_USE_NO_UPDATE_CHECK: "1" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.status, "WARN");
+  assert.equal(out.drift, used.length);
+  assert.ok(out.results.some((x) => x.source === "film.json" && x.findings.some((f) => f.rule === "name-reveal")));
+
+  const { warnings } = validateFilm(data, dir);
+  const drift = warnings.filter((w) => /^script-drift/.test(w.message));
+  assert.equal(drift.length, 1, "one summary warning, not one per shot");
+  assert.match(drift[0].message, new RegExp(`${used.length} shot\\(s\\)`));
+});
