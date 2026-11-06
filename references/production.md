@@ -9,11 +9,12 @@ Init creates scaffolds; those files are not an approved plan. Include audience/t
 opening frame, first line, shot IDs, source-backed actions, spoken copy, displayed copy,
 screen text, intended windows and ending action. Existing user-approved copy counts as reviewed.
 
-Review four stages in order; fix a revise result before proceeding:
+Review five stages in order; fix a revise result before proceeding. Facts and voice are separate passes: a fact review adds qualifiers that make narration read like a specification, so those go on screen before they go into speech:
 
 | Stage | Reviewer receives | Record | Check |
 |---|---|---|---|
 | Script | SCRIPT.md and claim/source excerpts only | reviews/01-script.md | Concrete opening that earns attention; no unsupported claims, filler, abstract nouns in place of actions, repeated three-part patterns or forced slogans; each line matches a visible change; speech/reading budget; ending action |
+| Voice | SCRIPT.md spoken copy and `script lint` output only | reviews/02-voice.md | Content first: the author's own judgement and reasons are in it, not a summary of the source; then a person talking to the stated audience: first line said while pointing at the picture (no number, rule or coined term); no name reveals or moral tails; two items and one or two numbers per spoken line; spoken register; shot shapes vary. Smoothing grammar while keeping the structure is not a pass. See [narration-writing.md](narration-writing.md) |
 | Storyboard | One selected keyframe per shot, copy and intended takeaway | reviews/02-storyboard.md | Composition, scale, subtitle placement, labels over the subject |
 | Rhythm | Only the draft ranges whose timing is in question | reviews/03-rhythm.md | Holds, transitions, camera moves, readability and speech synchronization |
 | Final | MP4, contact sheet, takeaway and unresolved notes | reviews/04-final.md | Continuity, technical defects and remaining detail; reopen earlier stages if their content changed |

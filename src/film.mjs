@@ -1,4 +1,5 @@
 import { resolveNarrationCheckConfig } from "./narration-check.mjs";
+import { lintFilmNarration } from "./narration-lint.mjs";
 import { validateTeaching } from "./teaching.mjs";
 import { projectInput } from "./projects.mjs";
 import { groupCaptions } from "./caption-plan.mjs";
@@ -380,6 +381,10 @@ export function validateFilm(
   directingChecks(data, shots, error, (p, message) =>
     warnings.push({ path: p, message }),
   );
+  // Spoken-copy fingerprints of a summarised document (references/narration-writing.md): warnings with evidence.
+  for (const r of lintFilmNarration(data))
+    for (const f of r.findings)
+      warnings.push({ path: f.path, message: `narration ${f.rule} [${r.lang}${f.shot ? ` ${f.shot}` : ""}]: "${[...f.text].slice(0, 40).join("")}" — ${f.message}` });
   const music = data.music ?? "none";
   let musicFile = null,
     scoreFile = null;

@@ -1,0 +1,62 @@
+{
+ "source": "the same fictional facts said by a colleague (hand-written reference)",
+ "languages": [
+  "zh"
+ ],
+ "shots": [
+  {
+   "id": "hook",
+   "narration": {
+    "zh": "你看这辆车，轮子正好压在白线里面。拍一张，账户马上多出十个积分。"
+   }
+  },
+  {
+   "id": "what",
+   "narration": {
+    "zh": "这个功能就是奖励好好停车的人。停得越规矩，积分越多，积分能换骑行券。"
+   }
+  },
+  {
+   "id": "zone",
+   "narration": {
+    "zh": "停车区是运营在后台圈的。推荐区停一次给双倍，禁停区要扣分。"
+   }
+  },
+  {
+   "id": "photo",
+   "narration": {
+    "zh": "停好了得拍张照。车轮和白线都要拍进去，系统认出来才算数。"
+   }
+  },
+  {
+   "id": "streak",
+   "narration": {
+    "zh": "连着七天都停对，再送五十分。中间断一天？那就从头来。"
+   }
+  },
+  {
+   "id": "redeem",
+   "narration": {
+    "zh": "一百分换一张五块钱的券。你看，停得规矩，骑车就便宜了。"
+   }
+  },
+  {
+   "id": "abuse",
+   "narration": {
+    "zh": "防刷分我们卡了几道：同一辆车十分钟只算一次，一个账号一天最多五次。"
+   }
+  },
+  {
+   "id": "change",
+   "narration": {
+    "zh": "老积分一比一搬过来。违规过的账号先不搬，这个我们单独处理。"
+   }
+  },
+  {
+   "id": "end",
+   "narration": {
+    "zh": "月底积分会清零，没换掉的就没了。具体怎么清，还在等产品出文档。"
+   }
+  }
+ ]
+}
