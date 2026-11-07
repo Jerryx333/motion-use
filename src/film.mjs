@@ -1,5 +1,5 @@
 import { resolveNarrationCheckConfig } from "./narration-check.mjs";
-import { lintFilmNarration } from "./narration-lint.mjs";
+import { lintFilmNarration, scriptDrift, scriptTable } from "./narration-lint.mjs";
 import { validateTeaching } from "./teaching.mjs";
 import { projectInput } from "./projects.mjs";
 import { groupCaptions } from "./caption-plan.mjs";
@@ -385,6 +385,16 @@ export function validateFilm(
   for (const r of lintFilmNarration(data))
     for (const f of r.findings)
       warnings.push({ path: f.path, message: `narration ${f.rule} [${r.lang}${f.shot ? ` ${f.shot}` : ""}]: "${[...f.text].slice(0, 40).join("")}" — ${f.message}` });
+  // The voiceover reads film.json; a reviewed SCRIPT.md that never reached it is not what ships.
+  const scriptFile = dir ? path.join(dir, "SCRIPT.md") : null;
+  const table = scriptFile && fs.existsSync(scriptFile) ? scriptTable(fs.readFileSync(scriptFile, "utf8")) : null;
+  const filmLangs = Array.isArray(data?.languages) && data.languages.length ? data.languages : null;
+  if (table && Array.isArray(data?.shots) && (table.lang || !filmLangs || filmLangs.length === 1)) {
+    const lang = table.lang ?? filmLangs?.[0] ?? "zh";
+    const drift = scriptDrift(table, data, lang).findings;
+    if (drift.length)
+      warnings.push({ path: "$.shots", message: `script-drift [${lang}]: ${drift.length} shot(s) say something different in SCRIPT.md and film.json (${drift.slice(0, 8).map((f) => f.shot).join(", ")}${drift.length > 8 ? ", …" : ""}); the voiceover reads film.json. Run motion-use script lint for each line` });
+  }
   const music = data.music ?? "none";
   let musicFile = null,
     scoreFile = null;
