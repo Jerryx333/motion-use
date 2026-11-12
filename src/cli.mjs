@@ -1025,7 +1025,8 @@ async function render(o, [briefPath]) {
           const shots = brief.shots?.map((s)=>({id:s.id,start:Math.max(0,s.start-from),end:Math.min(to-from,s.end-from)})).filter((s)=>s.end>s.start) ?? [];
           const m = measureMotion(previewFile,{shots,cuts:shots.slice(1).map((s)=>s.start)});
           motion = { ...m, level: gradeMotion(m).level };
-          const review = path.join(out,"review",id,`preview-${from}-${to}`);
+          // Beside review/<id>, not inside it: the full render claims and empties review/<id>.
+          const review = path.join(out,"review",`${id}-preview-${from}-${to}`);
           claimDir(review);
           previewReport = path.join(review,"report.json");
           fs.writeFileSync(previewReport,JSON.stringify({file:previewFile,preview:true,from,to,motion},null,2)+"\n");

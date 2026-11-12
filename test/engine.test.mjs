@@ -193,6 +193,13 @@ test("external engine: a --from/--to preview asks only for those frames, split a
   const file = JSON.parse(r.out).outputs[0].file;
   const frames = execFileSync("ffprobe", ["-v", "error", "-count_frames", "-select_streams", "v", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", file], { encoding: "utf8" });
   assert.equal(Number(frames), 30);
+  // #103: a full render into the same out must not trip over the preview's review folder, nor delete it
+  const preview = JSON.parse(r.out).outputs[0].report;
+  assert.ok(preview && fs.existsSync(preview), r.out);
+  const full = await run(["render", dir, "--allow-code", "--release", "--no-asr", "--json"]);
+  assert.equal(full.code, 0, full.out + full.err);
+  assert.ok(fs.existsSync(JSON.parse(full.out).outputs[0].verification.report));
+  assert.ok(fs.existsSync(preview), "preview evidence survives the full render");
 });
 
 test("external engine: a short or wrong-size frame sequence, or a failing command, fails the render clearly", { timeout: 180000 }, async (t) => {
